@@ -73,12 +73,8 @@ func parseConfig(config string) *Config {
 		if len(configVal) < 2 {
 			continue
 		}
-		runtime.LogError(line)
 		key := trim(configVal[0])
 		value := trim(configVal[1])
-		runtime.LogError(key)
-		runtime.LogError(value)
-
 		switch key {
 		case "auth_uri":
 			ret.AuthBaseURI = value

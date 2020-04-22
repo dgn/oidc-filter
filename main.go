@@ -9,6 +9,21 @@ import (
 var (
 	rootContext = &oidcRootContext{}
 	config      = &Config{}
+	jsBody      = `
+<html>
+	<script>
+		var uriHash = new URLSearchParams(
+			window.location.hash.substr(1) // skip the first char (#)
+		);
+		var token = uriHash.get('access_token');
+		if (token == null) {
+			token = "";
+		}
+		document.cookie = "oidcToken=" + token;
+		window.location.reload(true);
+	</script>
+</html>
+`
 )
 
 func main() {
@@ -17,6 +32,7 @@ func main() {
 }
 
 type Config struct {
+	Host          string
 	Scope         string
 	ClientID      string
 	AuthBaseURI   string
@@ -76,6 +92,8 @@ func parseConfig(config string) *Config {
 		key := trim(configVal[0])
 		value := trim(configVal[1])
 		switch key {
+		case "host":
+			ret.Host = value
 		case "auth_uri":
 			ret.AuthBaseURI = value
 		case "scheme":
@@ -93,7 +111,7 @@ func parseConfig(config string) *Config {
 
 // override
 func (ctx *oidcRootContext) OnConfigure(_ int) bool {
-	runtime.LogInfo("Loading config")
+	runtime.LogDebug("Loading config")
 	configBytes, status := ctx.GetConfiguration()
 	if status != runtime.StatusOk {
 		return false
@@ -107,9 +125,10 @@ type oidcFilter struct {
 
 	contextID             uint32
 	cachedResponseHeaders map[string]string
+	sendJSBody            bool
 }
 
-func (ctx *oidcFilter) getTokenFromCookie() string {
+func (ctx *oidcFilter) getCookie(name string) string {
 	cookieHeader, ok := ctx.GetHttpRequestHeader("cookie")
 	if ok != runtime.StatusOk {
 		return ""
@@ -117,12 +136,11 @@ func (ctx *oidcFilter) getTokenFromCookie() string {
 
 	for _, cookie := range strings.Split(cookieHeader, ";") {
 		cookieParts := strings.Split(cookie, "=")
-		if cookieParts[0] == "oidcToken" {
-			return cookieParts[1]
+		if trim(cookieParts[0]) == name {
+			return trim(cookieParts[1])
 		}
 	}
 	return ""
-
 }
 
 func (ctx *oidcFilter) getTokenFromPath() string {
@@ -152,9 +170,9 @@ func getAuthURI(authURI, scope, clientID, scheme, requestHost, requestPath strin
 }
 
 func (ctx *oidcFilter) GetAuthURI() string {
-	host, ok := ctx.GetHttpRequestHeader("host")
+	host, ok := ctx.GetHttpRequestHeader("Host")
 	if ok != runtime.StatusOk || host == "" {
-		host = "localhost:18000"
+		host = config.Host
 	}
 	path, ok := ctx.GetHttpRequestHeader(":path")
 	if ok != runtime.StatusOk || path == "" {
@@ -165,15 +183,21 @@ func (ctx *oidcFilter) GetAuthURI() string {
 
 // override
 func (ctx *oidcFilter) OnHttpRequestHeaders(_ int) runtime.Action {
-	token := ctx.getTokenFromCookie()
+	state := ctx.getCookie("oidcState")
+	if state == "redirected" {
+		runtime.LogDebug("Returning JS body to retrieve access_token")
+		ctx.RememberHttpResponseHeader("set-cookie", "oidcState=")
+		ctx.RememberHttpResponseHeader("Content-Type", "text/html; charset=UTF-8")
+		ctx.SendHttpResponse(200, nil, jsBody)
+		return runtime.ActionPause
+	}
+	token := ctx.getCookie("oidcToken")
 	if token == "" {
-		token = ctx.getTokenFromPath()
-		if token == "" {
-			ctx.RememberHttpResponseHeader("location", ctx.GetAuthURI())
-			ctx.SendHttpResponse(302, nil, "")
-			return runtime.ActionPause
-		}
-		ctx.RememberHttpResponseHeader("set-cookie", "oidcToken="+token)
+		runtime.LogDebug("Redirecting")
+		ctx.RememberHttpResponseHeader("set-cookie", "oidcState=redirected")
+		ctx.RememberHttpResponseHeader("location", ctx.GetAuthURI())
+		ctx.SendHttpResponse(302, nil, "")
+		return runtime.ActionPause
 	}
 
 	ctx.SetHttpRequestHeader("authorization", "Bearer "+token)
@@ -198,9 +222,11 @@ func (ctx *oidcFilter) OnHttpResponseHeaders(_ int) runtime.Action {
 	for key, value := range ctx.cachedResponseHeaders {
 		ctx.SetHttpResponseHeader(key, value)
 	}
-	// if we got a 403 or 401, remove the cookie
+	// if we got a 403 or 401, remove the cookie and refresh
 	if ctx.requestIsUnauthorized() {
-		ctx.SetHttpResponseHeader("set-cookie", "oidcToken=")
+		ctx.RememberHttpResponseHeader("Content-Type", "text/html; charset=UTF-8")
+		ctx.SendHttpResponse(200, nil, jsBody)
+		return runtime.ActionPause
 	}
 	return runtime.ActionContinue
 }

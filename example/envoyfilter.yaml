@@ -1,0 +1,41 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: oidc-filter
+spec:
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: SIDECAR_INBOUND
+      proxy:
+        proxyVersion: '^1\.5.*'
+      listener:
+        filterChain:
+          filter:
+            name: envoy.http_connection_manager
+            subFilter:
+              name: envoy.filters.http.jwt_authn
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        config:
+          config:
+            name: oidc-filter
+            rootId: oidc-filter_root
+            configuration: |
+                host: localhost:8080
+                auth_uri: http://localhost:9090/auth/realms/master/protocol/openid-connect/auth
+                scheme: http
+                scope: email
+                client_id: test
+            vmConfig:
+              code:
+                local:
+                  filename: /var/local/lib/wasm-filters/oidc.wasm
+              runtime: envoy.wasm.runtime.v8
+              vmId: oidc-filter
+              allow_precompiled: true
+        name: envoy.filters.http.wasm
+  workloadSelector:
+    labels:
+      app: httpbin

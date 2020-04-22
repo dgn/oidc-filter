@@ -9,7 +9,7 @@
 
 ## How do I use this thing?
 
-Check out the [example/](https://github.com/dgn/oidc-filter/tree/master/example/] directory.
+Check out the [example/](https://github.com/dgn/oidc-filter/tree/master/example/) directory.
 
 ## Limitations
 

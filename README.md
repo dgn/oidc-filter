@@ -21,5 +21,5 @@ Check out the [example/](https://github.com/dgn/oidc-filter/tree/master/example/
 ## Development
 
 - Running `make build` in the root of the repository will build `oidc.wasm`
-- See the [example/](https://github.com/dgn/oidc-filter/tree/master/example/] directory for how to test your changes
+- See the [example/](https://github.com/dgn/oidc-filter/tree/master/example/) directory for how to test your changes
 

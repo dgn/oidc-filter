@@ -1,7 +1,7 @@
 build: oidc.wasm
 
 oidc.wasm:
-	tinygo build -o oidc.wasm -wasm-abi=generic -target wasm ./main.go
+	GOPATH=${GOPATH}:${PWD} tinygo build -o oidc.wasm -wasm-abi=generic -target wasm main
 
 .PHONY: clean
 clean:

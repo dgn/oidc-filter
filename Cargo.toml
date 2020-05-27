@@ -1,0 +1,13 @@
+[package]
+name = "oidc-filter"
+version = "0.1.0"
+authors = ["Daniel Grimm <dgrimm@redhat.com>"]
+edition = "2018"
+
+[dependencies]
+proxy-wasm = "0.1.0"
+log = "0.4.8"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"

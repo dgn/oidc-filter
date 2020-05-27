@@ -1,7 +1,8 @@
 build: oidc.wasm
 
 oidc.wasm:
-	GOPATH=${GOPATH}:${PWD} tinygo build -o oidc.wasm -wasm-abi=generic -target wasm main
+	cargo build --target wasm32-unknown-unknown --release
+	cp target/wasm32-unknown-unknown/release/oidc_filter.wasm ./oidc.wasm
 
 .PHONY: clean
 clean:

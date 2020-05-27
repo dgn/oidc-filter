@@ -14,7 +14,7 @@ spec:
           filter:
             name: envoy.http_connection_manager
             subFilter:
-              name: envoy.filters.http.jwt_authn
+              name: envoy.router
     patch:
       operation: INSERT_BEFORE
       value:
@@ -31,7 +31,7 @@ spec:
             vmConfig:
               code:
                 local:
-                  filename: /var/local/lib/wasm-filters/oidc.wasm
+                  filename: /etc/istio/proxy/oidc.wasm
               runtime: envoy.wasm.runtime.v8
               vmId: oidc-filter
               allow_precompiled: true

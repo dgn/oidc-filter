@@ -1,13 +1,18 @@
 use log::trace;
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
-// use std::time::Duration;
+use url::form_urlencoded;
+use serde_json::{Value};
+use std::time::Duration;
 
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
     proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(OIDCFilter) });
 }
+
+const AUTH_CLUSTER: &str = "keycloak.default.svc.cluster.local";
+const AUTH_URI: &str = "http://localhost:9090/auth/realms/master/protocol/openid-connect/auth";
 
 struct OIDCFilter;
 
@@ -20,6 +25,10 @@ impl OIDCFilter {
             }
         }
         return false;
+    }
+
+    fn get_code(&self) -> String {
+        return "".to_string()
     }
 
     fn get_cookie(&self, name: &str) -> String {
@@ -39,10 +48,21 @@ impl OIDCFilter {
         }
         return "".to_owned()
     }
+
+    fn get_redirect_uri(&self, current_uri: &str) -> String {
+        let encoded: String = form_urlencoded::Serializer::new(String::new())
+            .append_pair("response_type", "code")
+            .append_pair("scope", "openid profile email")
+            .append_pair("redirect_uri", current_uri)
+            .finish();
+        
+        format!("{}?{:?}", AUTH_URI, encoded)
+    }
 }
 
 impl HttpContext for OIDCFilter {
     fn on_http_request_headers(&mut self, _: usize) -> Action {
+        let path = self.get_http_request_header(":path").unwrap();
         trace!("Request");
         if !self.is_authorized() {
             trace!("Not authorized");
@@ -51,10 +71,17 @@ impl HttpContext for OIDCFilter {
                 self.set_http_request_header("Authorization", Some(&format!("Bearer {}", token)));
                 return Action::Continue
             }
+
+            let code = self.get_code();
+            if code != "" {
+                let _ = self.dispatch_http_call(AUTH_CLUSTER, vec![], Some(b""), vec![], Duration::new(5, 0));
+                return Action::Pause
+            }
+
             self.send_http_response(
-                403,
-                vec![("Powered-By", "proxy-wasm")],
-                Some(b"Access forbidden.\n"),
+                302,
+                vec![("Location", self.get_redirect_uri(path.as_str()).as_str())],
+                Some(b""),
             );
             return Action::Pause
         }
@@ -69,18 +96,21 @@ impl HttpContext for OIDCFilter {
 
 impl Context for OIDCFilter {
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
+        let path = self.get_http_request_header(":path").unwrap();
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
-            if !body.is_empty() && body[0] % 2 == 0 {
-                trace!("Access granted.");
-                self.resume_http_request();
-                return;
+            let data: Value = serde_json::from_slice(body.as_slice()).unwrap();
+
+            if data["id_token"] != "" {
+                self.send_http_response(
+                    302,
+                    vec![
+                        ("SetCookie", format!("oidcToken={}", data["id_token"]).as_str()),
+                        ("Location", path.as_str()),
+                    ],
+                    Some(b""),
+                );
             }
         }
         trace!("Access forbidden.");
-        self.send_http_response(
-            403,
-            vec![("Powered-By", "proxy-wasm")],
-            Some(b"Access forbidden.\n"),
-        );
     }
 }

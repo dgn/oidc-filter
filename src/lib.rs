@@ -1,4 +1,4 @@
-use log::{debug, info, warn};
+use log::{debug, info};
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use url::form_urlencoded;
@@ -8,15 +8,20 @@ use std::time::Duration;
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
-    proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(OIDCFilter) });
+    proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(OIDCFilter{authority: "".to_string(), path: "".to_string()}) });
 }
 
+// TODO: read these from config
 const AUTH_CLUSTER: &str = "outbound|8080||keycloak.default.svc.cluster.local";
 const AUTH_HOST: &str = "keycloak.default.svc.cluster.local:8080";
 const AUTH_URI: &str = "http://localhost:9090/auth/realms/master/protocol/openid-connect/auth";
 const TOKEN_URI: &str = "http://localhost:9090/auth/realms/master/protocol/openid-connect/token";
+const CLIENT_SECRET: &str = "52d98cd5-867f-4e93-9222-177fef0cb0cc";
 
-struct OIDCFilter;
+struct OIDCFilter{
+    authority: String,
+    path: String,
+}
 
 impl OIDCFilter {
     fn is_authorized(&self) -> bool {
@@ -73,13 +78,51 @@ impl OIDCFilter {
         
         format!("{}?{}", AUTH_URI, encoded)
     }
+
+    fn get_http_authority(&self) -> String {
+        return self.authority.to_owned();
+    }
+
+    fn set_http_authority(&mut self, authority: String) {
+        self.authority = authority.to_owned();
+    }
+
+    fn get_http_path(&self) -> String {
+        return self.path.to_owned();
+    }
+
+    fn set_http_path(&mut self, path: String) {
+        self.path = path.to_owned();
+    }
 }
 
 impl HttpContext for OIDCFilter {
     fn on_http_request_headers(&mut self, _: usize) -> Action {
         let host = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
+        self.set_http_authority(host.to_owned());
+        
+        // TODO: move this into its own fn filter_query
         let path_parts: Vec<_> = path.split("?").collect();
+        let mut redirect_path_serializer: url::form_urlencoded::Serializer<String> = form_urlencoded::Serializer::new(String::new());
+        let redirect_path: String;
+        if path_parts.len() < 2 {
+            redirect_path = path.clone();
+        } else {
+            for (key, value) in form_urlencoded::parse(path_parts[1].as_bytes()).into_owned() {
+                if key != "code" && key != "session_state" {
+                    redirect_path_serializer.append_pair(key.as_str(), value.as_str());
+                }
+            }
+            let query: String = redirect_path_serializer.finish();
+            if query == "" {
+                redirect_path = path_parts[0].to_string();
+            } else {
+                redirect_path = format!("{}?{}", path_parts[0], query);    
+            }
+        }
+        self.set_http_path(redirect_path.to_owned());
+
         info!("Request received");
         if !self.is_authorized() {
             info!("No auth header present. Checking for cookie containing id_token");
@@ -95,20 +138,25 @@ impl HttpContext for OIDCFilter {
             if code != "" {
                 info!("Code found. Dispatching HTTP call to token endpoint");
                 let data: String = form_urlencoded::Serializer::new(String::new())
-                .append_pair("grant_type", "authorization_code")
-                .append_pair("code", code.as_str())
-                .append_pair("redirect_uri", format!("http://{}{}", host, path_parts[0]).as_str())
-                .append_pair("client_id", "test")
-                .append_pair("client_secret", "30b8c95d-2885-49e5-bfe2-3c0c5e603eff")
-                .finish();
-                debug!("Sending data to token endpoint: {}", data);
+                    .append_pair("grant_type", "authorization_code")
+                    .append_pair("code", code.as_str())
+                    .append_pair("redirect_uri", format!("http://{}{}", host, redirect_path).as_str())
+                    .append_pair("client_id", "test")
+                    .append_pair("client_secret", CLIENT_SECRET)
+                    .finish();
+                info!("Sending data to token endpoint: {}", data);
                 
-                self.dispatch_http_call(AUTH_CLUSTER, vec![
-                    (":method", "POST"),
-                    (":path", TOKEN_URI),
-                    (":authority", AUTH_HOST),
-                    ("Content-Type", "application/x-www-form-urlencoded"),
-                ], Some(data.as_bytes()), vec![], Duration::from_secs(5)).unwrap();
+                self.dispatch_http_call(
+                    AUTH_CLUSTER, vec![
+                        (":method", "POST"),
+                        (":path", TOKEN_URI),
+                        (":authority", AUTH_HOST),
+                        ("Content-Type", "application/x-www-form-urlencoded"),
+                    ],
+                    Some(data.as_bytes()),
+                    vec![],
+                    Duration::from_secs(5)
+                ).unwrap();
                 return Action::Pause
             }
 
@@ -132,11 +180,8 @@ impl HttpContext for OIDCFilter {
 impl Context for OIDCFilter {
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
         info!("Got response from token endpoint");
-        //let host = self.get_http_request_header(":authority").unwrap();
-        //let path = self.get_http_request_header(":path").unwrap();
-        let host = "localhost:8080";
-        let path = "/";
-        let path_parts: Vec<_> = path.split("?").collect();
+        let host = self.get_http_authority();
+        let path = self.get_http_path();
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
             let data: Value = serde_json::from_slice(body.as_slice()).unwrap();
             debug!("Received json blob: {}", data);
@@ -150,7 +195,7 @@ impl Context for OIDCFilter {
                     302,
                     vec![
                         ("Set-Cookie", format!("oidcToken={};Max-Age={}", data.get("id_token").unwrap(), data.get("expires_in").unwrap()).as_str()),
-                        ("Location", format!("http://{}{}", host, path_parts[0]).as_str()),
+                        ("Location", format!("http://{}{}", host, path).as_str()),
                     ],
                     Some(b""),
                 );

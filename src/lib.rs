@@ -5,22 +5,41 @@ use url::form_urlencoded;
 use serde_json::{Value};
 use std::time::Duration;
 
+
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
-    proxy_wasm::set_http_context(|_, _| -> Box<dyn HttpContext> { Box::new(OIDCFilter{authority: "".to_string(), path: "".to_string()}) });
+    proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
+        Box::new(OIDCRootContext{
+            config: FilterConfig{
+                auth_cluster: "".to_string(),
+                auth_host: "".to_string(),
+                login_uri: "".to_string(),
+                token_uri: "".to_string(),
+                client_id: "".to_string(),
+                client_secret: "".to_string(),
+            }
+        })
+    });
 }
-
-// TODO: read these from config
-const AUTH_CLUSTER: &str = "outbound|8080||keycloak.default.svc.cluster.local";
-const AUTH_HOST: &str = "keycloak.default.svc.cluster.local:8080";
-const AUTH_URI: &str = "http://localhost:9090/auth/realms/master/protocol/openid-connect/auth";
-const TOKEN_URI: &str = "http://localhost:9090/auth/realms/master/protocol/openid-connect/token";
-const CLIENT_SECRET: &str = "52d98cd5-867f-4e93-9222-177fef0cb0cc";
 
 struct OIDCFilter{
     authority: String,
     path: String,
+    config: FilterConfig,
+}
+
+struct OIDCRootContext {
+    config: FilterConfig
+}
+
+struct FilterConfig {
+    auth_cluster: String,
+    auth_host: String,
+    login_uri: String,
+    token_uri: String,
+    client_id: String,
+    client_secret: String,
 }
 
 impl OIDCFilter {
@@ -76,7 +95,7 @@ impl OIDCFilter {
             .append_pair("redirect_uri", current_uri)
             .finish();
         
-        format!("{}?{}", AUTH_URI, encoded)
+        format!("{}?{}", self.config.login_uri, encoded)
     }
 
     fn get_http_authority(&self) -> String {
@@ -94,9 +113,11 @@ impl OIDCFilter {
     fn set_http_path(&mut self, path: String) {
         self.path = path.to_owned();
     }
+
 }
 
 impl HttpContext for OIDCFilter {
+
     fn on_http_request_headers(&mut self, _: usize) -> Action {
         let host = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
@@ -141,16 +162,16 @@ impl HttpContext for OIDCFilter {
                     .append_pair("grant_type", "authorization_code")
                     .append_pair("code", code.as_str())
                     .append_pair("redirect_uri", format!("http://{}{}", host, redirect_path).as_str())
-                    .append_pair("client_id", "test")
-                    .append_pair("client_secret", CLIENT_SECRET)
+                    .append_pair("client_id", self.config.client_id.as_str())
+                    .append_pair("client_secret", self.config.client_secret.as_str())
                     .finish();
                 info!("Sending data to token endpoint: {}", data);
                 
                 self.dispatch_http_call(
-                    AUTH_CLUSTER, vec![
+                    self.config.auth_cluster.as_str(), vec![
                         (":method", "POST"),
-                        (":path", TOKEN_URI),
-                        (":authority", AUTH_HOST),
+                        (":path", self.config.token_uri.as_str()),
+                        (":authority", self.config.auth_host.as_str()),
                         ("Content-Type", "application/x-www-form-urlencoded"),
                     ],
                     Some(data.as_bytes()),
@@ -178,6 +199,7 @@ impl HttpContext for OIDCFilter {
 }
 
 impl Context for OIDCFilter {
+
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
         info!("Got response from token endpoint");
         let host = self.get_http_authority();
@@ -203,4 +225,54 @@ impl Context for OIDCFilter {
             }
         }
     }
+}
+
+impl Context for OIDCRootContext {}
+
+impl RootContext for OIDCRootContext {
+    
+    fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
+        info!("VM STARTED");
+        true
+    }
+
+    fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
+        info!("READING CONFIG");
+        if self.config.auth_cluster == "" {
+            info!("CONFIG EMPTY");
+            if let Some(config_bytes) = self.get_configuration() {
+                info!("GOT CONFIG");
+                // TODO: some proper error handling here
+                let cfg: Value = serde_json::from_slice(config_bytes.as_slice()).unwrap();
+                self.config.auth_cluster = cfg.get("auth_cluster").unwrap().as_str().unwrap().to_string();
+                self.config.auth_host = cfg.get("auth_host").unwrap().as_str().unwrap().to_string();
+                self.config.login_uri = cfg.get("login_uri").unwrap().as_str().unwrap().to_string();
+                self.config.token_uri = cfg.get("token_uri").unwrap().as_str().unwrap().to_string();
+                self.config.client_id = cfg.get("client_id").unwrap().as_str().unwrap().to_string();
+                self.config.client_secret = cfg.get("client_secret").unwrap().as_str().unwrap().to_string();
+            }
+        }
+        true
+    }
+
+    fn create_http_context(&self, _context_id: u32, _root_context_id: u32) -> Box<dyn HttpContext> {
+        Box::new(OIDCFilter{
+            authority: "".to_string(),
+            path: "".to_string(),
+            config: FilterConfig{
+                auth_cluster: self.config.auth_cluster.clone(),
+                auth_host: self.config.auth_host.clone(),
+                login_uri: self.config.login_uri.clone(),
+                token_uri: self.config.token_uri.clone(),
+                client_id: self.config.client_id.clone(),
+                client_secret: self.config.client_secret.clone(),
+            },
+        })
+    
+    }
+
+    fn get_type(&self) -> ContextType {
+        ContextType::HttpContext
+    }
+
 }

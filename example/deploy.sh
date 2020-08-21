@@ -6,6 +6,7 @@ istioctl manifest apply -y
 kubectl create -f https://raw.githubusercontent.com/keycloak/keycloak-quickstarts/latest/kubernetes-examples/keycloak.yaml
 kubectl rollout status deployment/keycloak
 ./setup-keycloak.sh
+sed -i -e "s/INSERT_CLIENT_SECRET_HERE/${CLIENT_SECRET}/" envoyfilter.yaml
 
 kubectl label namespace default istio-injection=enabled
 kubectl apply -f httpbin.yaml

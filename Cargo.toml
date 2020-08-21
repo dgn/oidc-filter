@@ -5,10 +5,13 @@ authors = ["Daniel Grimm <dgrimm@redhat.com>"]
 edition = "2018"
 
 [dependencies]
-proxy-wasm = "0.1.0"
+# Gotta use my fork because config reading is broken upstream
+proxy-wasm = { git = "https://github.com/dgn/proxy-wasm-rust-sdk" }
+# proxy-wasm = "0.1.2"
 log = "0.4.8"
 url = "2.1.1"
 serde_json = "1.0"
+state = "0.4.1"
 
 [lib]
 crate-type = ["cdylib"]

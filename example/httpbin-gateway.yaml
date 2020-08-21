@@ -1,7 +1,7 @@
 apiVersion: networking.istio.io/v1alpha3
 kind: Gateway
 metadata:
-  name: httpbin-gateway
+  name: example-gateway
 spec:
   selector:
     istio: ingressgateway # use Istio default gateway implementation
@@ -21,8 +21,16 @@ spec:
   hosts:
   - "*"
   gateways:
-  - httpbin-gateway
+  - example-gateway
   http:
+  - match:
+    - uri:
+        prefix: /auth
+    route:
+    - destination:
+        port:
+          number: 8080
+        host: keycloak.default.svc.cluster.local
   - route:
     - destination:
         port:

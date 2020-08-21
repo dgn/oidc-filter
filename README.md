@@ -23,3 +23,6 @@ Check out the [example/](https://github.com/dgn/oidc-filter/tree/master/example/
 - Running `make build` in the root of the repository will build `oidc.wasm`
 - See the [example/](https://github.com/dgn/oidc-filter/tree/master/example/) directory for how to test your changes
 
+## TODO
+- Add option to replay POST requests after redirects (so that redirected AJAX calls don't fail)
+  - Not sure if that's good behaviour

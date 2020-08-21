@@ -23,12 +23,14 @@ spec:
             name: oidc-filter
             rootId: oidc-filter_root
             configuration: |
-                host: localhost:8080
-                auth_uri: http://localhost:9090/auth/realms/master/protocol/openid-connect/auth
-                scheme: http
-                scope: email
-                client_id: test
-                blah
+                {
+                  "auth_cluster": "outbound|8080||keycloak.default.svc.cluster.local",
+                  "auth_host": "keycloak.default.svc.cluster.local:8080",
+                  "login_uri": "http://localhost:8080/auth/realms/master/protocol/openid-connect/auth",
+                  "token_uri": "http://localhost:8080/auth/realms/master/protocol/openid-connect/token",
+                  "client_id": "test",
+                  "client_secret": "INSERT_CLIENT_SECRET_HERE"
+                }
             vmConfig:
               code:
                 local:

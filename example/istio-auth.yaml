@@ -8,7 +8,7 @@ spec:
     matchLabels:
       app: httpbin
   jwtRules:
-  - issuer: http://localhost:9090/auth/realms/master
+  - issuer: http://localhost:8080/auth/realms/master
     jwksUri: "http://keycloak.default.svc:8080/auth/realms/master/protocol/openid-connect/certs"
 ---
 apiVersion: "security.istio.io/v1beta1"

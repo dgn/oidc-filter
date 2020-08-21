@@ -2,6 +2,16 @@
 
 This directory contains a full, working example of how to use oidc-filter together with [Istio](https://istio.io) and [Keycloak](https://keycloak.org).
 
+## Requirements
+
+You will need:
+
+- kind 0.7.0+
+- kubectl
+- istioctl (tested with version 1.6.7, but anything 1.6+ should work)
+
+## How to run the example
+
 You can deploy the example by running (in this directory):
 
 ```bash

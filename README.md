@@ -13,10 +13,9 @@ Check out the [example/](https://github.com/dgn/oidc-filter/tree/master/example/
 
 ## Limitations
 
-- Currently only supports the [Implicit Flow](https://openid.net/specs/openid-connect-implicit-1_0.html#ImplicitFlow)
-- tinygo is extremely limited in what it can successfully compile to wasm; I wasn't able to use any json library for example
 - oidc-filter doesn't verify the JWTs yet (but Istio does that)
-- the cookie has no expiry date and will be refreshed when upstream returns 401 or 403 despite sending token
+- If the token has expired, AJAX calls with methods other than GET will fail on first attempt (but then succeed afterwards)
+- Not using state or nonce yet (so susceptible to replay attacks)
 
 ## Development
 

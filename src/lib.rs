@@ -191,11 +191,6 @@ impl HttpContext for OIDCFilter {
         }
         Action::Continue
     }
-
-    fn on_http_response_headers(&mut self, _: usize) -> Action {
-        self.set_http_response_header("Powered-By", Some("proxy-wasm"));
-        Action::Continue
-    }
 }
 
 impl Context for OIDCFilter {

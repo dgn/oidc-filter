@@ -29,12 +29,17 @@ spec:
                   "login_uri": "http://localhost:8080/auth/realms/master/protocol/openid-connect/auth",
                   "token_uri": "http://localhost:8080/auth/realms/master/protocol/openid-connect/token",
                   "client_id": "test",
-                  "client_secret": "INSERT_CLIENT_SECRET_HERE"
+                  "client_secret": "ab891f78-7777-4727-af4d-94a1a633bbbb"
                 }
             vmConfig:
               code:
-                local:
-                  filename: /var/local/lib/wasm-filters/oidc.wasm
+                remote:
+                  httpUri:
+                    uri: http://nginx.default.svc.cluster.local/oidc.wasm
+                    cluster: outbound|80||nginx.default.svc.cluster.local
+                    timeout:
+                      seconds: 5
+                  sha256: 18727b12917d8e8430006b350750596a32ce521b5f47a93bcc84d045b7b4188f
               runtime: envoy.wasm.runtime.v8
               vmId: oidc-filter
               allow_precompiled: true

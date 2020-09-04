@@ -4,3 +4,4 @@ oidc.wasm
 #Added by cargo
 
 /target
+/build

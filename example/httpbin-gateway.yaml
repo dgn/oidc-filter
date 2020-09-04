@@ -25,6 +25,16 @@ spec:
   http:
   - match:
     - uri:
+        prefix: /wasm
+    rewrite:
+      uri: /
+    route:
+    - destination:
+        port:
+          number: 80
+        host: nginx.default.svc.cluster.local
+  - match:
+    - uri:
         prefix: /auth
     route:
     - destination:

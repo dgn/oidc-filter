@@ -2,7 +2,7 @@
 
 set -eux
 
-kubectl port-forward svc/keycloak 8080:8080 &
+kubectl port-forward -n default svc/keycloak 8080:8080 &
 port_forward_pid=$!
 
 sleep 2

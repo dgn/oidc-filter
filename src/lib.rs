@@ -80,7 +80,7 @@ impl OIDCFilter {
         let assignments: Vec<_> = cookies.split(";").collect();
         for assignment in assignments {
             let kvpair: Vec<_> = assignment.split("=").collect();
-            if kvpair[0] == name {
+            if kvpair[0].trim() == name {
                 return kvpair[1].to_owned();
             }
         }

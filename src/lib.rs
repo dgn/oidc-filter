@@ -94,7 +94,7 @@ impl OIDCFilter {
             .append_pair("scope", "openid profile email")
             .append_pair("redirect_uri", current_uri)
             .finish();
-        
+
         format!("{}?{}", self.config.login_uri, encoded)
     }
 
@@ -122,7 +122,7 @@ impl HttpContext for OIDCFilter {
         let host = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
         self.set_http_authority(host.to_owned());
-        
+
         // TODO: move this into its own fn filter_query
         let path_parts: Vec<_> = path.split("?").collect();
         let mut redirect_path_serializer: url::form_urlencoded::Serializer<String> = form_urlencoded::Serializer::new(String::new());
@@ -139,7 +139,7 @@ impl HttpContext for OIDCFilter {
             if query == "" {
                 redirect_path = path_parts[0].to_string();
             } else {
-                redirect_path = format!("{}?{}", path_parts[0], query);    
+                redirect_path = format!("{}?{}", path_parts[0], query);
             }
         }
         self.set_http_path(redirect_path.to_owned());
@@ -166,7 +166,7 @@ impl HttpContext for OIDCFilter {
                     .append_pair("client_secret", self.config.client_secret.as_str())
                     .finish();
                 info!("Sending data to token endpoint: {}", data);
-                
+
                 self.dispatch_http_call(
                     self.config.auth_cluster.as_str(), vec![
                         (":method", "POST"),
@@ -225,7 +225,7 @@ impl Context for OIDCFilter {
 impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
-    
+
     fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
         info!("VM STARTED");
         true
@@ -250,8 +250,8 @@ impl RootContext for OIDCRootContext {
         true
     }
 
-    fn create_http_context(&self, _context_id: u32, _root_context_id: u32) -> Box<dyn HttpContext> {
-        Box::new(OIDCFilter{
+    fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
+        Some(Box::new(OIDCFilter{
             authority: "".to_string(),
             path: "".to_string(),
             config: FilterConfig{
@@ -262,12 +262,11 @@ impl RootContext for OIDCRootContext {
                 client_id: self.config.client_id.clone(),
                 client_secret: self.config.client_secret.clone(),
             },
-        })
-    
+        }))
+
     }
 
-    fn get_type(&self) -> ContextType {
-        ContextType::HttpContext
+    fn get_type(&self) -> Option<ContextType> {
+        Some(ContextType::HttpContext)
     }
-
 }

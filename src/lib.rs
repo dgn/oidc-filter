@@ -1,10 +1,9 @@
-use log::{debug, info};
+use log::{debug, error};
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use url::form_urlencoded;
-use serde_json::{Value};
 use std::time::Duration;
-
+use serde::{Deserialize};
 
 #[no_mangle]
 pub fn _start() {
@@ -12,6 +11,8 @@ pub fn _start() {
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
         Box::new(OIDCRootContext{
             config: FilterConfig{
+                target_header_name: "".to_string(),
+                cookie_name: "".to_string(),
                 auth_cluster: "".to_string(),
                 auth_host: "".to_string(),
                 login_uri: "".to_string(),
@@ -33,13 +34,38 @@ struct OIDCRootContext {
     config: FilterConfig
 }
 
+#[derive(Deserialize)]
 struct FilterConfig {
+    #[serde(default = "default_target_header_name")]
+    target_header_name: String,
+    #[serde(default = "default_oidc_cookie_name")]
+    cookie_name: String,
     auth_cluster: String,
     auth_host: String,
     login_uri: String,
     token_uri: String,
     client_id: String,
     client_secret: String,
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    error_description: String,
+    #[serde(default)]
+    id_token: String,
+    #[serde(default)]
+    expires_in: i64
+}
+
+fn default_oidc_cookie_name() -> String {
+    "oidcToken".to_string()
+}
+
+fn default_target_header_name() -> String {
+    "authorization".to_string()
 }
 
 impl OIDCFilter {
@@ -71,23 +97,32 @@ impl OIDCFilter {
 
     fn get_cookie(&self, name: &str) -> String {
         let headers = self.get_http_request_headers();
-        let mut cookies = "";
         for (key,value) in headers.iter() {
             if key.to_lowercase().trim() == "cookie" {
-                cookies = value;
-            }
-        }
-        let assignments: Vec<_> = cookies.split(";").collect();
-        for assignment in assignments {
-            let kvpair: Vec<_> = assignment.split("=").collect();
-            if kvpair[0].trim() == name {
-                return kvpair[1].to_owned();
+                let assignments: Vec<_> = value.split(";").collect();
+                for assignment in assignments {
+                    let kvpair: Vec<_> = assignment.split("=").collect();
+                    if kvpair[0].trim() == name {
+                        return kvpair[1].to_owned();
+                    }
+                }
             }
         }
         return "".to_owned()
     }
 
-    fn get_redirect_uri(&self, current_uri: &str) -> String {
+    fn get_callback_url(&self, host: &str, redirect_path: &str) -> String {
+        let headers = self.get_http_request_headers();
+        for (key,_value) in headers.iter() {
+            if key.to_lowercase().trim() == "x-forwarded-proto" {
+                return format!("{}://{}{}", _value, host, redirect_path);
+            }
+        }
+
+        format!("http://{}{}", host, redirect_path)
+    }
+
+    fn get_authorization_url(&self, current_uri: &str) -> String {
         let encoded: String = form_urlencoded::Serializer::new(String::new())
             .append_pair("client_id", self.config.client_id.as_str())
             .append_pair("response_type", "code")
@@ -114,110 +149,139 @@ impl OIDCFilter {
         self.path = path.to_owned();
     }
 
+    fn send_internal_server_error(&self, error: String) {
+        error!("{}", error.as_str());
+        self.send_http_response(
+            500,
+            vec![("Content-Type", "text/plain")],
+            Some(error.as_bytes()),
+        );
+    }
+
+    fn to_set_cookie_header(&self, t: TokenResponse) -> String {
+        let headers = self.get_http_request_headers();
+        let mut flags = "HttpOnly; Secure";
+        for (key,_value) in headers.iter() {
+            if key.to_lowercase().trim() == "x-forwarded-proto" {
+                if _value == "http" {
+                    flags = "HttpOnly";
+                }
+                break
+            }
+        }
+
+        return format!("{}={};Max-Age={};{}", self.config.cookie_name, t.id_token, t.expires_in, flags)
+    }
 }
 
 impl HttpContext for OIDCFilter {
 
     fn on_http_request_headers(&mut self, _: usize) -> Action {
+        if self.is_authorized() {
+            return Action::Continue
+        }
+
+        let token = self.get_cookie(self.config.cookie_name.as_str());
+        if token != "" {
+            debug!("Cookie found, setting auth header");
+            self.set_http_request_header(self.config.target_header_name.as_str(), Some(&format!("Bearer {}", token)));
+            return Action::Continue
+        }
+
         let host = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
-        self.set_http_authority(host.to_owned());
+        let path_parts: Vec<_> = path.split('?').collect();
+        let redirect_path = path_parts[0];
+        let callback_url = self.get_callback_url(&host, &redirect_path);
 
-        // TODO: move this into its own fn filter_query
-        let path_parts: Vec<_> = path.split("?").collect();
-        let mut redirect_path_serializer: url::form_urlencoded::Serializer<String> = form_urlencoded::Serializer::new(String::new());
-        let redirect_path: String;
-        if path_parts.len() < 2 {
-            redirect_path = path.clone();
-        } else {
-            for (key, value) in form_urlencoded::parse(path_parts[1].as_bytes()).into_owned() {
-                if key != "code" && key != "session_state" {
-                    redirect_path_serializer.append_pair(key.as_str(), value.as_str());
-                }
-            }
-            let query: String = redirect_path_serializer.finish();
-            if query == "" {
-                redirect_path = path_parts[0].to_string();
-            } else {
-                redirect_path = format!("{}?{}", path_parts[0], query);
-            }
-        }
-        self.set_http_path(redirect_path.to_owned());
+        let code = self.get_code();
+        if code != "" {
+            debug!("Code found. Dispatching HTTP call to token endpoint: {}", &callback_url);
+            self.set_http_path(redirect_path.to_owned());
+            self.set_http_authority(host.to_owned());
 
-        info!("Request received");
-        if !self.is_authorized() {
-            info!("No auth header present. Checking for cookie containing id_token");
-            let token = self.get_cookie("oidcToken");
-            if token != "" {
-                info!("Cookie found, setting auth header");
-                self.set_http_request_header("Authorization", Some(&format!("Bearer {}", token)));
-                return Action::Continue
-            }
+            let data: String = form_urlencoded::Serializer::new(String::new())
+                .append_pair("grant_type", "authorization_code")
+                .append_pair("code", code.as_str())
+                .append_pair("redirect_uri", callback_url.as_str())
+                .append_pair("client_id", self.config.client_id.as_str())
+                .append_pair("client_secret", self.config.client_secret.as_str())
+                .finish();
 
-            info!("No cookie found. Checking for code in request parameters");
-            let code = self.get_code();
-            if code != "" {
-                info!("Code found. Dispatching HTTP call to token endpoint");
-                let data: String = form_urlencoded::Serializer::new(String::new())
-                    .append_pair("grant_type", "authorization_code")
-                    .append_pair("code", code.as_str())
-                    .append_pair("redirect_uri", format!("http://{}{}", host, redirect_path).as_str())
-                    .append_pair("client_id", self.config.client_id.as_str())
-                    .append_pair("client_secret", self.config.client_secret.as_str())
-                    .finish();
-                info!("Sending data to token endpoint: {}", data);
-
-                self.dispatch_http_call(
-                    self.config.auth_cluster.as_str(), vec![
-                        (":method", "POST"),
-                        (":path", self.config.token_uri.as_str()),
-                        (":authority", self.config.auth_host.as_str()),
-                        ("Content-Type", "application/x-www-form-urlencoded"),
-                    ],
-                    Some(data.as_bytes()),
-                    vec![],
-                    Duration::from_secs(5)
-                ).unwrap();
-                return Action::Pause
-            }
-
-            info!("No code found. Redirecting to auth endpoint");
-            self.send_http_response(
-                302,
-                vec![("Location", self.get_redirect_uri(format!("http://{}{}", host, path).as_str()).as_str())],
-                Some(b""),
+            debug!("Sending data to token endpoint: {}", data);
+            let token_request = self.dispatch_http_call(
+                self.config.auth_cluster.as_str(),
+                vec![
+                    (":method", "POST"),
+                    (":path", self.config.token_uri.as_str()),
+                    (":authority", self.config.auth_host.as_str()),
+                    ("Content-Type", "application/x-www-form-urlencoded"),
+                ],
+                Some(data.as_bytes()),
+                vec![],
+                Duration::from_secs(5)
             );
+
+            match token_request {
+                Err(e) => {
+                    self.send_internal_server_error(format!("Cannot dispatch call to cluster:  {:?}", e));
+                }
+                Ok(_) => {}
+            }
+
             return Action::Pause
         }
-        Action::Continue
+
+        debug!("No code found. Redirecting to authorization endpoint {}", &callback_url);
+        self.send_http_response(
+            302,
+            vec![("Location", self.get_authorization_url(callback_url.as_str()).as_str())],
+            Some(b"")
+        );
+
+        return Action::Pause
     }
 }
 
 impl Context for OIDCFilter {
 
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
-        info!("Got response from token endpoint");
-        let host = self.get_http_authority();
-        let path = self.get_http_path();
+        debug!("Got response from token endpoint");
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
-            let data: Value = serde_json::from_slice(body.as_slice()).unwrap();
-            debug!("Received json blob: {}", data);
-            if data.get("error") != None {
-                info!("Error fetching token: {}, {}", data.get("error").unwrap(), data.get("error_description").unwrap());
-                return
-            }
-            if data.get("id_token") != None {
-                info!("id_token found. Setting cookie and redirecting...");
-                self.send_http_response(
-                    302,
-                    vec![
-                        ("Set-Cookie", format!("oidcToken={};Max-Age={}", data.get("id_token").unwrap(), data.get("expires_in").unwrap()).as_str()),
-                        ("Location", format!("http://{}{}", host, path).as_str()),
-                    ],
-                    Some(b""),
-                );
-                return
-            }
+            match serde_json::from_slice::<TokenResponse>(body.as_slice()) {
+                Ok(data) => {
+                    if data.error != "" {
+                        let error = format!("error: {}, error_description: {}", data.error, data.error_description);
+                        self.send_internal_server_error(error);
+                        return
+                    }
+
+                    if data.id_token != "" {
+                        debug!("id_token found. Setting cookie and redirecting...");
+
+                        let host = self.get_http_authority();
+                        let path = self.get_http_path();
+                        self.send_http_response(
+                            302,
+                            vec![
+                                ("Set-Cookie", self.to_set_cookie_header(data).as_str()),
+                                // Replace this get_callback_url call with the source url
+                                // We also need nonce support, so it's best to
+                                // persist the origin host and url in a signed jwt
+                                ("Location", self.get_callback_url(&host, &path).as_str()),
+                            ],
+                            Some(b""),
+                        );
+                        return
+                    }
+                },
+                Err(e) => {
+                    self.send_internal_server_error(format!("Invalid token response:  {:?}", e));
+                }
+            };
+        } else {
+            let error = format!("Invalid payload received");
+            self.send_internal_server_error(error);
         }
     }
 }
@@ -226,28 +290,15 @@ impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
 
-    fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        info!("VM STARTED");
-        true
-    }
-
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
-        info!("READING CONFIG");
-        if self.config.auth_cluster == "" {
-            info!("CONFIG EMPTY");
-            if let Some(config_bytes) = self.get_configuration() {
-                info!("GOT CONFIG");
-                // TODO: some proper error handling here
-                let cfg: Value = serde_json::from_slice(config_bytes.as_slice()).unwrap();
-                self.config.auth_cluster = cfg.get("auth_cluster").unwrap().as_str().unwrap().to_string();
-                self.config.auth_host = cfg.get("auth_host").unwrap().as_str().unwrap().to_string();
-                self.config.login_uri = cfg.get("login_uri").unwrap().as_str().unwrap().to_string();
-                self.config.token_uri = cfg.get("token_uri").unwrap().as_str().unwrap().to_string();
-                self.config.client_id = cfg.get("client_id").unwrap().as_str().unwrap().to_string();
-                self.config.client_secret = cfg.get("client_secret").unwrap().as_str().unwrap().to_string();
-            }
+        if let Some(config_bytes) = self.get_configuration() {
+            let cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
+            self.config = cfg;
+            true
+        } else {
+            error!("NO CONFIG PRESENT");
+            false
         }
-        true
     }
 
     fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
@@ -255,6 +306,8 @@ impl RootContext for OIDCRootContext {
             authority: "".to_string(),
             path: "".to_string(),
             config: FilterConfig{
+                target_header_name: self.config.target_header_name.clone(),
+                cookie_name: self.config.cookie_name.clone(),
                 auth_cluster: self.config.auth_cluster.clone(),
                 auth_host: self.config.auth_host.clone(),
                 login_uri: self.config.login_uri.clone(),

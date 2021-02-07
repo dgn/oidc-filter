@@ -89,7 +89,7 @@ impl OIDCFilter {
 
     fn get_redirect_uri(&self, current_uri: &str) -> String {
         let encoded: String = form_urlencoded::Serializer::new(String::new())
-            .append_pair("client_id", "test")
+            .append_pair("client_id", self.config.client_id.as_str())
             .append_pair("response_type", "code")
             .append_pair("scope", "openid profile email")
             .append_pair("redirect_uri", current_uri)

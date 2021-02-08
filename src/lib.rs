@@ -5,6 +5,7 @@ use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use url::form_urlencoded;
 use serde::{Deserialize, Serialize};
+const MAX: usize = usize::MAX;
 
 #[no_mangle]
 pub fn _start() {
@@ -89,11 +90,10 @@ impl OIDCFilter {
 
     fn get_code(&self) -> String {
         let path = self.get_http_request_header(":path").unwrap();
-        let path_parts: Vec<_> = path.split("?").collect();
-        if path_parts.len() < 2 {
-            return "".to_owned()
-        }
-        let query = path_parts[1].to_string();
+        let query_offset = path.find("?").unwrap_or(0) + 1;
+        if query_offset == 1 { return "".to_owned(); }
+
+        let query = &path[query_offset..path.len()];
         let encoded = form_urlencoded::parse(query.as_bytes());
         for (k, v) in encoded {
             if k == "code" {
@@ -137,22 +137,18 @@ impl OIDCFilter {
         format!("{}?{}", self.config.login_uri, encoded)
     }
 
-    fn send_internal_server_error(&self, error: String) {
+    fn send_internal_server_error(&self, code: u32, error: String) {
         error!("{}", error.as_str());
         self.send_http_response(
-            500,
+            code,
             vec![("Content-Type", "text/plain")],
             Some(error.as_bytes()),
         );
     }
 
     fn get_proto(&self) -> String {
-        let headers = self.get_http_request_headers();
-        for (key,value) in headers.iter() {
-            if key.to_lowercase().trim() == "x-forwarded-proto" {
-                return value.to_owned()
-            }
-        }
+        let proto = self.get_header("x-forwarded-proto");
+        if proto != "" { return proto }
         return "http".to_owned()
     }
 
@@ -204,6 +200,13 @@ impl HttpContext for OIDCFilter {
             return Action::Continue
         }
 
+        // Non html requests don't need redirects
+        let has_html_accept = self.get_header("accept").find("text/html").unwrap_or(MAX);
+        if has_html_accept == MAX {
+            self.send_internal_server_error(403, "Not Authorized".to_owned());
+            return Action::Pause
+        }
+
         let code = self.get_code();
         if code != "" {
             let handshake = self.retrieve_handshake_object().unwrap();
@@ -233,7 +236,7 @@ impl HttpContext for OIDCFilter {
 
             match token_request {
                 Err(e) => {
-                    self.send_internal_server_error(format!("Cannot dispatch call to cluster:  {:?}", e));
+                    self.send_internal_server_error(503, format!("Cannot dispatch call to cluster:  {:?}", e));
                 }
                 Ok(_) => {}
             }
@@ -265,7 +268,7 @@ impl Context for OIDCFilter {
                 Ok(data) => {
                     if data.error != "" {
                         let error = format!("error: {}, error_description: {}", data.error, data.error_description);
-                        self.send_internal_server_error(error);
+                        self.send_internal_server_error(500, error);
                         return
                     }
 
@@ -287,12 +290,12 @@ impl Context for OIDCFilter {
                     }
                 },
                 Err(e) => {
-                    self.send_internal_server_error(format!("Invalid token response:  {:?}", e));
+                    self.send_internal_server_error(500, format!("Invalid token response:  {:?}", e));
                 }
             };
         } else {
             let error = format!("Invalid payload received");
-            self.send_internal_server_error(error);
+            self.send_internal_server_error(500, error);
         }
     }
 }

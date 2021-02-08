@@ -87,10 +87,6 @@ impl OIDCFilter {
         return "".to_owned();
     }
 
-    fn is_authorized(&self) -> bool {
-        return self.get_header("authorization") != ""
-    }
-
     fn get_code(&self) -> String {
         let path = self.get_http_request_header(":path").unwrap();
         let path_parts: Vec<_> = path.split("?").collect();
@@ -111,11 +107,12 @@ impl OIDCFilter {
         let headers = self.get_http_request_headers();
         for (key,value) in headers.iter() {
             if key.to_lowercase().trim() == "cookie" {
-                let assignments: Vec<_> = value.split(";").collect();
-                for assignment in assignments {
-                    let kvpair: Vec<_> = assignment.split("=").collect();
-                    if kvpair[0].trim() == name {
-                        return kvpair[1].to_owned();
+                let cookies: Vec<_> = value.split(";").collect();
+                for cookie_string in cookies {
+                    let cookie_name_end = cookie_string.find('=').unwrap_or(0);
+                    let cookie_name = &cookie_string[0..cookie_name_end];
+                    if cookie_name.trim() == name {
+                        return cookie_string[(cookie_name_end + 1)..cookie_string.len()].to_owned();
                     }
                 }
             }
@@ -196,7 +193,7 @@ impl OIDCFilter {
 impl HttpContext for OIDCFilter {
 
     fn on_http_request_headers(&mut self, _: usize) -> Action {
-        if self.is_authorized() {
+        if self.get_header("authorization") != "" {
             return Action::Continue
         }
 

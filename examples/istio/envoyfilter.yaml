@@ -40,7 +40,7 @@ spec:
               vmConfig:
                 code:
                   local:
-                    filename: /Users/marcbachmann/Development/marcbachmann/oidc-filter/target/wasm32-unknown-unknown/release/oidc_filter.wasm
+                    filename: /var/local/lib/wasm-filters/oidc.wasm
                 runtime: envoy.wasm.runtime.v8
                 vmId: oidc-filter
                 allow_precompiled: true

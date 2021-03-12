@@ -137,7 +137,7 @@ impl OIDCFilter {
         format!("{}?{}", self.config.login_uri, encoded)
     }
 
-    fn send_internal_server_error(&self, code: u32, error: String) {
+    fn send_error(&self, code: u32, error: String) {
         error!("{}", error.as_str());
         self.send_http_response(
             code,
@@ -203,7 +203,7 @@ impl HttpContext for OIDCFilter {
         // Non html requests don't need redirects
         let has_html_accept = self.get_header("accept").find("text/html").unwrap_or(MAX);
         if has_html_accept == MAX {
-            self.send_internal_server_error(403, "Not Authorized".to_owned());
+            self.send_error(403, "Not Authorized".to_owned());
             return Action::Pause
         }
 
@@ -236,7 +236,7 @@ impl HttpContext for OIDCFilter {
 
             match token_request {
                 Err(e) => {
-                    self.send_internal_server_error(503, format!("Cannot dispatch call to cluster:  {:?}", e));
+                    self.send_error(503, format!("Cannot dispatch call to cluster:  {:?}", e));
                 }
                 Ok(_) => {}
             }
@@ -268,7 +268,7 @@ impl Context for OIDCFilter {
                 Ok(data) => {
                     if data.error != "" {
                         let error = format!("error: {}, error_description: {}", data.error, data.error_description);
-                        self.send_internal_server_error(500, error);
+                        self.send_error(500, error);
                         return
                     }
 
@@ -290,12 +290,12 @@ impl Context for OIDCFilter {
                     }
                 },
                 Err(e) => {
-                    self.send_internal_server_error(500, format!("Invalid token response:  {:?}", e));
+                    self.send_error(500, format!("Invalid token response:  {:?}", e));
                 }
             };
         } else {
             let error = format!("Invalid payload received");
-            self.send_internal_server_error(500, error);
+            self.send_error(500, error);
         }
     }
 }

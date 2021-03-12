@@ -161,13 +161,13 @@ impl OIDCFilter {
         return format!("{}=;Max-Age=0", name.as_str());
     }
 
-    fn persist_handshake_object(&self) -> Result<(Claims, String), Box<dyn Error>> {
-        let iss = self.get_http_request_header(":authority").unwrap();
+    fn create_handshake_object(&self) -> Result<(Claims, String), Box<dyn Error>> {
+        let authority = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
         let nonce = self.get_header("x-request-id");
         let claims = Claims{
             nonce: nonce,
-            iss: iss.to_owned(),
+            iss: authority.to_owned(),
             path: path.to_owned(),
             proto: self.get_proto(),
             redirect_uri: self.get_callback_url(&iss, &path)
@@ -179,7 +179,7 @@ impl OIDCFilter {
         Ok((claims, cookie_header))
     }
 
-    fn retrieve_handshake_object(&self) -> Result<Claims, Box<dyn Error>> {
+    fn get_handshake_object(&self) -> Result<Claims, Box<dyn Error>> {
         let json = self.get_cookie(format!("{}.handshake", self.config.cookie_name.as_str()).as_str());
         let claims: Claims = serde_json::from_str(json.as_str()).unwrap();
         Ok(claims)
@@ -189,7 +189,9 @@ impl OIDCFilter {
 impl HttpContext for OIDCFilter {
 
     fn on_http_request_headers(&mut self, _: usize) -> Action {
-        if self.get_header("authorization") != "" {
+        // If the requester directly passes a header, this filter just passes the request
+        // and the next filter should verify that the token is actually valid
+        if self.get_header(self.config.target_header_name.as_str()) != "" {
             return Action::Continue
         }
 
@@ -209,7 +211,7 @@ impl HttpContext for OIDCFilter {
 
         let code = self.get_code();
         if code != "" {
-            let handshake = self.retrieve_handshake_object().unwrap();
+            let handshake = self.get_handshake_object().unwrap();
             debug!("Code found. Dispatching HTTP call to token endpoint");
             let data: String = form_urlencoded::Serializer::new(String::new())
                 .append_pair("grant_type", "authorization_code")
@@ -244,7 +246,7 @@ impl HttpContext for OIDCFilter {
             return Action::Pause
         }
 
-        let handshake = self.persist_handshake_object().unwrap();
+        let handshake = self.create_handshake_object().unwrap();
         debug!("No code found. Redirecting to authorization endpoint {}", handshake.0.redirect_uri);
         self.send_http_response(
             302,
@@ -275,7 +277,7 @@ impl Context for OIDCFilter {
                     if data.id_token != "" {
                         debug!("id_token found. Setting cookie and redirecting...");
 
-                        let handshake = self.retrieve_handshake_object().unwrap();
+                        let handshake = self.get_handshake_object().unwrap();
                         let source_url = format!("{}://{}{}", handshake.proto, handshake.iss, handshake.path);
                         self.send_http_response(
                             302,
@@ -294,7 +296,7 @@ impl Context for OIDCFilter {
                 }
             };
         } else {
-            let error = format!("Invalid payload received");
+            let error = format!("Received invalid payload from authorization server");
             self.send_error(500, error);
         }
     }

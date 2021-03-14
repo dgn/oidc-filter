@@ -42,6 +42,7 @@ static_resources:
                     "@type": "type.googleapis.com/google.protobuf.StringValue"
                     value: |
                       {
+                        "redirect_uri": "/callback",
                         "auth_cluster": "cluster_google_auth",
                         "auth_host": "oauth2.googleapis.com",
                         "token_uri": "/token",

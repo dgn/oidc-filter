@@ -13,6 +13,7 @@ pub fn _start() {
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
         Box::new(OIDCRootContext{
             config: FilterConfig{
+                redirect_uri: "".to_string(),
                 target_header_name: "".to_string(),
                 cookie_name: "".to_string(),
                 auth_cluster: "".to_string(),
@@ -36,6 +37,8 @@ struct OIDCRootContext {
 
 #[derive(Deserialize)]
 struct FilterConfig {
+    #[serde(default = "default_redirect_uri")]
+    redirect_uri: String,
     #[serde(default = "default_target_header_name")]
     target_header_name: String,
     #[serde(default = "default_oidc_cookie_name")]
@@ -67,6 +70,10 @@ struct Claims {
     proto: String,
     path: String,
     redirect_uri: String
+}
+
+fn default_redirect_uri() -> String {
+    "{proto}://{authority}{path}".to_owned()
 }
 
 fn default_oidc_cookie_name() -> String {
@@ -120,9 +127,11 @@ impl OIDCFilter {
         return "".to_owned()
     }
 
-    fn get_callback_url(&self, host: &str, redirect_path: &str) -> String {
-        let proto = self.get_proto();
-        format!("{}://{}{}", proto, host, redirect_path)
+    fn get_redirect_uri(&self, proto: &str, authority: &str, path: &str) -> String {
+        return self.config.redirect_uri.to_owned()
+            .replace("{proto}", &proto)
+            .replace("{authority}", &authority)
+            .replace("{path}", &path)
     }
 
     fn get_authorization_url(&self, claims: Claims) -> String {
@@ -162,6 +171,7 @@ impl OIDCFilter {
     }
 
     fn create_handshake_object(&self) -> Result<(Claims, String), Box<dyn Error>> {
+        let proto = self.get_proto();
         let authority = self.get_http_request_header(":authority").unwrap();
         let path = self.get_http_request_header(":path").unwrap();
         let nonce = self.get_header("x-request-id");
@@ -170,7 +180,7 @@ impl OIDCFilter {
             iss: authority.to_owned(),
             path: path.to_owned(),
             proto: self.get_proto(),
-            redirect_uri: self.get_callback_url(&iss, &path)
+            redirect_uri: self.get_redirect_uri(&proto, &authority, &path)
         };
 
         let json = serde_json::to_string(&claims)?;
@@ -308,7 +318,10 @@ impl RootContext for OIDCRootContext {
 
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
         if let Some(config_bytes) = self.get_configuration() {
-            let cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
+            let mut cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
+            if cfg.redirect_uri.starts_with('/') {
+                cfg.redirect_uri = format!("{{proto}}://{{authority}}{}", cfg.redirect_uri);
+            }
             self.config = cfg;
             true
         } else {
@@ -320,6 +333,7 @@ impl RootContext for OIDCRootContext {
     fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
         Some(Box::new(OIDCFilter{
             config: FilterConfig{
+                redirect_uri: self.config.redirect_uri.clone(),
                 target_header_name: self.config.target_header_name.clone(),
                 cookie_name: self.config.cookie_name.clone(),
                 auth_cluster: self.config.auth_cluster.clone(),

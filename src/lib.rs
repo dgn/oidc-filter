@@ -35,7 +35,7 @@ struct OIDCRootContext {
     config: FilterConfig
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct FilterConfig {
     #[serde(default = "default_redirect_uri")]
     redirect_uri: String,
@@ -48,7 +48,7 @@ struct FilterConfig {
     login_uri: String,
     token_uri: String,
     client_id: String,
-    client_secret: String,
+    client_secret: String
 }
 
 #[derive(Deserialize)]
@@ -315,7 +315,6 @@ impl Context for OIDCFilter {
 impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
-
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
         if let Some(config_bytes) = self.get_configuration() {
             let mut cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
@@ -332,19 +331,8 @@ impl RootContext for OIDCRootContext {
 
     fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
         Some(Box::new(OIDCFilter{
-            config: FilterConfig{
-                redirect_uri: self.config.redirect_uri.clone(),
-                target_header_name: self.config.target_header_name.clone(),
-                cookie_name: self.config.cookie_name.clone(),
-                auth_cluster: self.config.auth_cluster.clone(),
-                auth_host: self.config.auth_host.clone(),
-                login_uri: self.config.login_uri.clone(),
-                token_uri: self.config.token_uri.clone(),
-                client_id: self.config.client_id.clone(),
-                client_secret: self.config.client_secret.clone(),
-            },
+            config: self.config.clone()
         }))
-
     }
 
     fn get_type(&self) -> Option<ContextType> {

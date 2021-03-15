@@ -5,7 +5,6 @@ use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use url::form_urlencoded;
 use serde::{Deserialize, Serialize};
-const MAX: usize = usize::MAX;
 
 #[no_mangle]
 pub fn _start() {
@@ -70,6 +69,30 @@ struct Claims {
     proto: String,
     path: String,
     redirect_uri: String
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    status: String,
+    error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_description: Option<String>
+}
+
+fn create_error(error: String) -> ErrorResponse {
+    ErrorResponse{
+        status: "error".to_owned(),
+        error: error,
+        error_description: None
+    }
+}
+
+fn create_error_with_description(error: String, error_description: String) -> ErrorResponse {
+    ErrorResponse{
+        status: "error".to_owned(),
+        error: error,
+        error_description: Some(error_description)
+    }
 }
 
 fn default_redirect_uri() -> String {
@@ -146,12 +169,13 @@ impl OIDCFilter {
         format!("{}?{}", self.config.login_uri, encoded)
     }
 
-    fn send_error(&self, code: u32, error: String) {
-        error!("{}", error.as_str());
+    fn send_error(&self, code: u32, response: ErrorResponse) {
+        let body = serde_json::to_string_pretty(&response).unwrap();
+        error!("{}", body);
         self.send_http_response(
             code,
-            vec![("Content-Type", "text/plain")],
-            Some(error.as_bytes()),
+            vec![("Content-Type", "application/json")],
+            Some(body.as_bytes())
         );
     }
 
@@ -212,13 +236,6 @@ impl HttpContext for OIDCFilter {
             return Action::Continue
         }
 
-        // Non html requests don't need redirects
-        let has_html_accept = self.get_header("accept").find("text/html").unwrap_or(MAX);
-        if has_html_accept == MAX {
-            self.send_error(403, "Not Authorized".to_owned());
-            return Action::Pause
-        }
-
         let code = self.get_code();
         if code != "" {
             let handshake = self.get_handshake_object().unwrap();
@@ -248,7 +265,10 @@ impl HttpContext for OIDCFilter {
 
             match token_request {
                 Err(e) => {
-                    self.send_error(503, format!("Cannot dispatch call to cluster:  {:?}", e));
+                    self.send_error(
+                        503,
+                        create_error(format!("Cannot dispatch call to cluster:  {:?}", e))
+                    );
                 }
                 Ok(_) => {}
             }
@@ -258,6 +278,25 @@ impl HttpContext for OIDCFilter {
 
         let handshake = self.create_handshake_object().unwrap();
         debug!("No code found. Redirecting to authorization endpoint {}", handshake.0.redirect_uri);
+
+        // Requests not originating from full page loads don't need redirects
+        let source = self.get_header("sec-fetch-dest");
+        let accept = self.get_header("accept");
+        if (source != "" && source != "document") || (source == "" && !accept.contains("text/html"))
+        {
+            self.send_error(
+                403,
+                create_error_with_description(
+                    "Not Authorized".to_owned(),
+                    format!(
+                        "Request did not originate from a browser. Please manually open the url: {}",
+                        self.get_authorization_url(handshake.0)
+                    )
+                )
+            );
+            return Action::Pause
+        }
+
         self.send_http_response(
             302,
             vec![
@@ -275,12 +314,18 @@ impl Context for OIDCFilter {
 
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
         debug!("Got response from token endpoint");
+
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
             match serde_json::from_slice::<TokenResponse>(body.as_slice()) {
                 Ok(data) => {
                     if data.error != "" {
-                        let error = format!("error: {}, error_description: {}", data.error, data.error_description);
-                        self.send_error(500, error);
+                        self.send_error(
+                            500,
+                            create_error_with_description(
+                                data.error.to_owned(),
+                                data.error_description.to_owned()
+                            )
+                        );
                         return
                     }
 
@@ -302,12 +347,17 @@ impl Context for OIDCFilter {
                     }
                 },
                 Err(e) => {
-                    self.send_error(500, format!("Invalid token response:  {:?}", e));
+                    self.send_error(
+                        500,
+                        create_error(format!("Invalid token response:  {:?}", e))
+                    );
                 }
             };
         } else {
-            let error = format!("Received invalid payload from authorization server");
-            self.send_error(500, error);
+            self.send_error(
+                500,
+                create_error(format!("Received invalid payload from authorization server"))
+            );
         }
     }
 }

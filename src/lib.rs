@@ -1,10 +1,10 @@
-use log::{debug, info};
+use std::time::Duration;
+use std::error::Error;
+use log::{debug, error};
 use proxy_wasm::traits::*;
 use proxy_wasm::types::*;
 use url::form_urlencoded;
-use serde_json::{Value};
-use std::time::Duration;
-
+use serde::{Deserialize, Serialize};
 
 #[no_mangle]
 pub fn _start() {
@@ -12,6 +12,9 @@ pub fn _start() {
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
         Box::new(OIDCRootContext{
             config: FilterConfig{
+                redirect_uri: "".to_string(),
+                target_header_name: "".to_string(),
+                cookie_name: "".to_string(),
                 auth_cluster: "".to_string(),
                 auth_host: "".to_string(),
                 login_uri: "".to_string(),
@@ -24,200 +27,337 @@ pub fn _start() {
 }
 
 struct OIDCFilter{
-    authority: String,
-    path: String,
-    config: FilterConfig,
+    config: FilterConfig
 }
 
 struct OIDCRootContext {
     config: FilterConfig
 }
 
+#[derive(Deserialize, Clone)]
 struct FilterConfig {
+    #[serde(default = "default_redirect_uri")]
+    redirect_uri: String,
+    #[serde(default = "default_target_header_name")]
+    target_header_name: String,
+    #[serde(default = "default_oidc_cookie_name")]
+    cookie_name: String,
     auth_cluster: String,
     auth_host: String,
     login_uri: String,
     token_uri: String,
     client_id: String,
-    client_secret: String,
+    client_secret: String
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    error_description: String,
+    #[serde(default)]
+    id_token: String,
+    #[serde(default)]
+    expires_in: i64
+}
+
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    nonce: String,
+    iss: String,
+    proto: String,
+    path: String,
+    redirect_uri: String
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    status: String,
+    error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_description: Option<String>
+}
+
+fn create_error(error: String) -> ErrorResponse {
+    ErrorResponse{
+        status: "error".to_owned(),
+        error: error,
+        error_description: None
+    }
+}
+
+fn create_error_with_description(error: String, error_description: String) -> ErrorResponse {
+    ErrorResponse{
+        status: "error".to_owned(),
+        error: error,
+        error_description: Some(error_description)
+    }
+}
+
+fn default_redirect_uri() -> String {
+    "{proto}://{authority}{path}".to_owned()
+}
+
+fn default_oidc_cookie_name() -> String {
+    "oidcToken".to_owned()
+}
+
+fn default_target_header_name() -> String {
+    "authorization".to_owned()
 }
 
 impl OIDCFilter {
-    fn is_authorized(&self) -> bool {
+    fn get_header(&self, name: &str) -> String {
         let headers = self.get_http_request_headers();
         for (key,_value) in headers.iter() {
-            if key.to_lowercase().trim() == "authorization" {
-                return true;
+            if key.to_lowercase().trim() == name {
+                return _value.to_owned();
             }
         }
-        return false;
+        return "".to_owned();
     }
 
     fn get_code(&self) -> String {
         let path = self.get_http_request_header(":path").unwrap();
-        let path_parts: Vec<_> = path.split("?").collect();
-        if path_parts.len() < 2 {
-            return "".to_string()
-        }
-        let query = path_parts[1].to_string();
+        let query_offset = path.find("?").unwrap_or(0) + 1;
+        if query_offset == 1 { return "".to_owned(); }
+
+        let query = &path[query_offset..path.len()];
         let encoded = form_urlencoded::parse(query.as_bytes());
         for (k, v) in encoded {
             if k == "code" {
                 return v.to_owned().to_string();
             }
         }
-        return "".to_string();
+        return "".to_owned();
     }
 
     fn get_cookie(&self, name: &str) -> String {
         let headers = self.get_http_request_headers();
-        let mut cookies = "";
         for (key,value) in headers.iter() {
             if key.to_lowercase().trim() == "cookie" {
-                cookies = value;
-            }
-        }
-        let assignments: Vec<_> = cookies.split(";").collect();
-        for assignment in assignments {
-            let kvpair: Vec<_> = assignment.split("=").collect();
-            if kvpair[0] == name {
-                return kvpair[1].to_owned();
+                let cookies: Vec<_> = value.split(";").collect();
+                for cookie_string in cookies {
+                    let cookie_name_end = cookie_string.find('=').unwrap_or(0);
+                    let cookie_name = &cookie_string[0..cookie_name_end];
+                    if cookie_name.trim() == name {
+                        return cookie_string[(cookie_name_end + 1)..cookie_string.len()].to_owned();
+                    }
+                }
             }
         }
         return "".to_owned()
     }
 
-    fn get_redirect_uri(&self, current_uri: &str) -> String {
+    fn get_redirect_uri(&self, proto: &str, authority: &str, path: &str) -> String {
+        return self.config.redirect_uri.to_owned()
+            .replace("{proto}", &proto)
+            .replace("{authority}", &authority)
+            .replace("{path}", &path)
+    }
+
+    fn get_authorization_url(&self, claims: Claims) -> String {
         let encoded: String = form_urlencoded::Serializer::new(String::new())
-            .append_pair("client_id", "test")
+            .append_pair("client_id", self.config.client_id.as_str())
             .append_pair("response_type", "code")
             .append_pair("scope", "openid profile email")
-            .append_pair("redirect_uri", current_uri)
+            .append_pair("redirect_uri", claims.redirect_uri.as_str())
+            .append_pair("nonce", claims.nonce.as_str())
             .finish();
-        
+
         format!("{}?{}", self.config.login_uri, encoded)
     }
 
-    fn get_http_authority(&self) -> String {
-        return self.authority.to_owned();
+    fn send_error(&self, code: u32, response: ErrorResponse) {
+        let body = serde_json::to_string_pretty(&response).unwrap();
+        error!("{}", body);
+        self.send_http_response(
+            code,
+            vec![("Content-Type", "application/json")],
+            Some(body.as_bytes())
+        );
     }
 
-    fn set_http_authority(&mut self, authority: String) {
-        self.authority = authority.to_owned();
+    fn get_proto(&self) -> String {
+        let proto = self.get_header("x-forwarded-proto");
+        if proto != "" { return proto }
+        return "http".to_owned()
     }
 
-    fn get_http_path(&self) -> String {
-        return self.path.to_owned();
+    fn to_set_cookie_header(&self, t: TokenResponse) -> String {
+        let flags = if self.get_proto().as_str() == "http" { "HttpOnly" } else { "HttpOnly; Secure" };
+        return format!("{}={};Max-Age={};{}", self.config.cookie_name, t.id_token, t.expires_in, flags)
     }
 
-    fn set_http_path(&mut self, path: String) {
-        self.path = path.to_owned();
+    fn to_del_cookie_header(&self, name: String) -> String {
+        return format!("{}=;Max-Age=0", name.as_str());
     }
 
+    fn create_handshake_object(&self) -> Result<(Claims, String), Box<dyn Error>> {
+        let proto = self.get_proto();
+        let authority = self.get_http_request_header(":authority").unwrap();
+        let path = self.get_http_request_header(":path").unwrap();
+        let nonce = self.get_header("x-request-id");
+        let claims = Claims{
+            nonce: nonce,
+            iss: authority.to_owned(),
+            path: path.to_owned(),
+            proto: self.get_proto(),
+            redirect_uri: self.get_redirect_uri(&proto, &authority, &path)
+        };
+
+        let json = serde_json::to_string(&claims)?;
+        let flags = if claims.proto.as_str() == "http" { "HttpOnly" } else { "HttpOnly; Secure" };
+        let cookie_header = format!("{}.handshake={};Max-Age=300;{}", self.config.cookie_name, json.as_str(), flags);
+        Ok((claims, cookie_header))
+    }
+
+    fn get_handshake_object(&self) -> Result<Claims, Box<dyn Error>> {
+        let json = self.get_cookie(format!("{}.handshake", self.config.cookie_name.as_str()).as_str());
+        let claims: Claims = serde_json::from_str(json.as_str()).unwrap();
+        Ok(claims)
+    }
 }
 
 impl HttpContext for OIDCFilter {
 
     fn on_http_request_headers(&mut self, _: usize) -> Action {
-        let host = self.get_http_request_header(":authority").unwrap();
-        let path = self.get_http_request_header(":path").unwrap();
-        self.set_http_authority(host.to_owned());
-        
-        // TODO: move this into its own fn filter_query
-        let path_parts: Vec<_> = path.split("?").collect();
-        let mut redirect_path_serializer: url::form_urlencoded::Serializer<String> = form_urlencoded::Serializer::new(String::new());
-        let redirect_path: String;
-        if path_parts.len() < 2 {
-            redirect_path = path.clone();
-        } else {
-            for (key, value) in form_urlencoded::parse(path_parts[1].as_bytes()).into_owned() {
-                if key != "code" && key != "session_state" {
-                    redirect_path_serializer.append_pair(key.as_str(), value.as_str());
-                }
-            }
-            let query: String = redirect_path_serializer.finish();
-            if query == "" {
-                redirect_path = path_parts[0].to_string();
-            } else {
-                redirect_path = format!("{}?{}", path_parts[0], query);    
-            }
+        // If the requester directly passes a header, this filter just passes the request
+        // and the next filter should verify that the token is actually valid
+        if self.get_header(self.config.target_header_name.as_str()) != "" {
+            return Action::Continue
         }
-        self.set_http_path(redirect_path.to_owned());
 
-        info!("Request received");
-        if !self.is_authorized() {
-            info!("No auth header present. Checking for cookie containing id_token");
-            let token = self.get_cookie("oidcToken");
-            if token != "" {
-                info!("Cookie found, setting auth header");
-                self.set_http_request_header("Authorization", Some(&format!("Bearer {}", token)));
-                return Action::Continue
+        let token = self.get_cookie(self.config.cookie_name.as_str());
+        if token != "" {
+            debug!("Cookie found, setting auth header");
+            self.set_http_request_header(self.config.target_header_name.as_str(), Some(&format!("Bearer {}", token)));
+            return Action::Continue
+        }
+
+        let code = self.get_code();
+        if code != "" {
+            let handshake = self.get_handshake_object().unwrap();
+            debug!("Code found. Dispatching HTTP call to token endpoint");
+            let data: String = form_urlencoded::Serializer::new(String::new())
+                .append_pair("grant_type", "authorization_code")
+                .append_pair("code", code.as_str())
+                .append_pair("redirect_uri", handshake.redirect_uri.as_str())
+                .append_pair("client_id", self.config.client_id.as_str())
+                .append_pair("client_secret", self.config.client_secret.as_str())
+                .append_pair("nonce", handshake.nonce.as_str())
+                .finish();
+
+            debug!("Sending data to token endpoint: {}", data);
+            let token_request = self.dispatch_http_call(
+                self.config.auth_cluster.as_str(),
+                vec![
+                    (":method", "POST"),
+                    (":path", self.config.token_uri.as_str()),
+                    (":authority", self.config.auth_host.as_str()),
+                    ("Content-Type", "application/x-www-form-urlencoded"),
+                ],
+                Some(data.as_bytes()),
+                vec![],
+                Duration::from_secs(5)
+            );
+
+            match token_request {
+                Err(e) => {
+                    self.send_error(
+                        503,
+                        create_error(format!("Cannot dispatch call to cluster:  {:?}", e))
+                    );
+                }
+                Ok(_) => {}
             }
 
-            info!("No cookie found. Checking for code in request parameters");
-            let code = self.get_code();
-            if code != "" {
-                info!("Code found. Dispatching HTTP call to token endpoint");
-                let data: String = form_urlencoded::Serializer::new(String::new())
-                    .append_pair("grant_type", "authorization_code")
-                    .append_pair("code", code.as_str())
-                    .append_pair("redirect_uri", format!("http://{}{}", host, redirect_path).as_str())
-                    .append_pair("client_id", self.config.client_id.as_str())
-                    .append_pair("client_secret", self.config.client_secret.as_str())
-                    .finish();
-                info!("Sending data to token endpoint: {}", data);
-                
-                self.dispatch_http_call(
-                    self.config.auth_cluster.as_str(), vec![
-                        (":method", "POST"),
-                        (":path", self.config.token_uri.as_str()),
-                        (":authority", self.config.auth_host.as_str()),
-                        ("Content-Type", "application/x-www-form-urlencoded"),
-                    ],
-                    Some(data.as_bytes()),
-                    vec![],
-                    Duration::from_secs(5)
-                ).unwrap();
-                return Action::Pause
-            }
+            return Action::Pause
+        }
 
-            info!("No code found. Redirecting to auth endpoint");
-            self.send_http_response(
-                302,
-                vec![("Location", self.get_redirect_uri(format!("http://{}{}", host, path).as_str()).as_str())],
-                Some(b""),
+        let handshake = self.create_handshake_object().unwrap();
+        debug!("No code found. Redirecting to authorization endpoint {}", handshake.0.redirect_uri);
+
+        // Requests not originating from full page loads don't need redirects
+        let source = self.get_header("sec-fetch-dest");
+        let accept = self.get_header("accept");
+        if (source != "" && source != "document") || (source == "" && !accept.contains("text/html"))
+        {
+            self.send_error(
+                403,
+                create_error_with_description(
+                    "Not Authorized".to_owned(),
+                    format!(
+                        "Request did not originate from a browser. Please manually open the url: {}",
+                        self.get_authorization_url(handshake.0)
+                    )
+                )
             );
             return Action::Pause
         }
-        Action::Continue
+
+        self.send_http_response(
+            302,
+            vec![
+                ("Set-Cookie", handshake.1.as_str()),
+                ("Location", self.get_authorization_url(handshake.0).as_str())
+            ],
+            Some(b"")
+        );
+
+        return Action::Pause
     }
 }
 
 impl Context for OIDCFilter {
 
     fn on_http_call_response(&mut self, _: u32, _: usize, body_size: usize, _: usize) {
-        info!("Got response from token endpoint");
-        let host = self.get_http_authority();
-        let path = self.get_http_path();
+        debug!("Got response from token endpoint");
+
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
-            let data: Value = serde_json::from_slice(body.as_slice()).unwrap();
-            debug!("Received json blob: {}", data);
-            if data.get("error") != None {
-                info!("Error fetching token: {}, {}", data.get("error").unwrap(), data.get("error_description").unwrap());
-                return
-            }
-            if data.get("id_token") != None {
-                info!("id_token found. Setting cookie and redirecting...");
-                self.send_http_response(
-                    302,
-                    vec![
-                        ("Set-Cookie", format!("oidcToken={};Max-Age={}", data.get("id_token").unwrap(), data.get("expires_in").unwrap()).as_str()),
-                        ("Location", format!("http://{}{}", host, path).as_str()),
-                    ],
-                    Some(b""),
-                );
-                return
-            }
+            match serde_json::from_slice::<TokenResponse>(body.as_slice()) {
+                Ok(data) => {
+                    if data.error != "" {
+                        self.send_error(
+                            500,
+                            create_error_with_description(
+                                data.error.to_owned(),
+                                data.error_description.to_owned()
+                            )
+                        );
+                        return
+                    }
+
+                    if data.id_token != "" {
+                        debug!("id_token found. Setting cookie and redirecting...");
+
+                        let handshake = self.get_handshake_object().unwrap();
+                        let source_url = format!("{}://{}{}", handshake.proto, handshake.iss, handshake.path);
+                        self.send_http_response(
+                            302,
+                            vec![
+                                ("Set-Cookie", self.to_set_cookie_header(data).as_str()),
+                                ("Set-Cookie", self.to_del_cookie_header(format!("{}.handshake", self.config.cookie_name.as_str())).as_str()),
+                                ("Location", source_url.as_str()),
+                            ],
+                            Some(b""),
+                        );
+                        return
+                    }
+                },
+                Err(e) => {
+                    self.send_error(
+                        500,
+                        create_error(format!("Invalid token response:  {:?}", e))
+                    );
+                }
+            };
+        } else {
+            self.send_error(
+                500,
+                create_error(format!("Received invalid payload from authorization server"))
+            );
         }
     }
 }
@@ -225,49 +365,27 @@ impl Context for OIDCFilter {
 impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
-    
-    fn on_vm_start(&mut self, _vm_configuration_size: usize) -> bool {
-        info!("VM STARTED");
-        true
-    }
-
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
-        info!("READING CONFIG");
-        if self.config.auth_cluster == "" {
-            info!("CONFIG EMPTY");
-            if let Some(config_bytes) = self.get_configuration() {
-                info!("GOT CONFIG");
-                // TODO: some proper error handling here
-                let cfg: Value = serde_json::from_slice(config_bytes.as_slice()).unwrap();
-                self.config.auth_cluster = cfg.get("auth_cluster").unwrap().as_str().unwrap().to_string();
-                self.config.auth_host = cfg.get("auth_host").unwrap().as_str().unwrap().to_string();
-                self.config.login_uri = cfg.get("login_uri").unwrap().as_str().unwrap().to_string();
-                self.config.token_uri = cfg.get("token_uri").unwrap().as_str().unwrap().to_string();
-                self.config.client_id = cfg.get("client_id").unwrap().as_str().unwrap().to_string();
-                self.config.client_secret = cfg.get("client_secret").unwrap().as_str().unwrap().to_string();
+        if let Some(config_bytes) = self.get_configuration() {
+            let mut cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
+            if cfg.redirect_uri.starts_with('/') {
+                cfg.redirect_uri = format!("{{proto}}://{{authority}}{}", cfg.redirect_uri);
             }
+            self.config = cfg;
+            true
+        } else {
+            error!("NO CONFIG PRESENT");
+            false
         }
-        true
     }
 
-    fn create_http_context(&self, _context_id: u32, _root_context_id: u32) -> Box<dyn HttpContext> {
-        Box::new(OIDCFilter{
-            authority: "".to_string(),
-            path: "".to_string(),
-            config: FilterConfig{
-                auth_cluster: self.config.auth_cluster.clone(),
-                auth_host: self.config.auth_host.clone(),
-                login_uri: self.config.login_uri.clone(),
-                token_uri: self.config.token_uri.clone(),
-                client_id: self.config.client_id.clone(),
-                client_secret: self.config.client_secret.clone(),
-            },
-        })
-    
+    fn create_http_context(&self, _context_id: u32) -> Option<Box<dyn HttpContext>> {
+        Some(Box::new(OIDCFilter{
+            config: self.config.clone()
+        }))
     }
 
-    fn get_type(&self) -> ContextType {
-        ContextType::HttpContext
+    fn get_type(&self) -> Option<ContextType> {
+        Some(ContextType::HttpContext)
     }
-
 }

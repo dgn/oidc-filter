@@ -1,0 +1,137 @@
+admin:
+  access_log_path: /dev/null
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10000
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  host_rewrite_literal: example.com
+                  cluster: cluster_example_com
+          http_filters:
+          - name: envoy.filters.http.wasm
+            typed_config:
+              "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+              type_url: type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+              value:
+                config:
+                  name: oidc-filter
+                  rootId: oidc-filter_root
+                  configuration:
+                    "@type": "type.googleapis.com/google.protobuf.StringValue"
+                    value: |
+                      {
+                        "redirect_uri": "/callback",
+                        "auth_cluster": "cluster_google_auth",
+                        "auth_host": "oauth2.googleapis.com",
+                        "token_uri": "/token",
+                        "login_uri": "https://accounts.google.com/o/oauth2/v2/auth",
+                        "client_id": "<YOUR-GOOGLE-OAUTH2-CLIENT-ID>",
+                        "client_secret": "<YOUR-GOOGLE-OAUTH2-CLIENT-SECRET>"
+                      }
+                  vmConfig:
+                    code:
+                      local:
+                        filename: /var/local/lib/wasm-filters/oidc.wasm
+                    runtime: envoy.wasm.runtime.v8
+                    vmId: oidc-filter
+                    allow_precompiled: true
+
+          - name: envoy.filters.http.jwt_authn
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+              providers:
+                oidc_provider:
+                  issuer: https://accounts.google.com
+                  forward: "true"
+                  remote_jwks:
+                    http_uri:
+                      uri: https://www.googleapis.com/oauth2/v3/certs
+                      cluster: cluster_google_certs
+                      timeout: 5s
+                    cache_duration:
+                      seconds: 3600
+              rules:
+                - match: { prefix: / }
+                  requires:
+                    provider_name: oidc_provider
+              bypass_cors_preflight: "true"
+
+          - name: envoy.filters.http.router
+
+
+  clusters:
+  - name: cluster_google_auth
+    connect_timeout: 30s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: cluster_oauth2_googleapis_com
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: oauth2.googleapis.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+
+  - name: cluster_google_certs
+    connect_timeout: 30s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: cluster_google_certs
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: www.googleapis.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+
+  - name: cluster_example_com
+    connect_timeout: 30s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: cluster_example_com
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: example.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext

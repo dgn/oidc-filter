@@ -1,4 +1,4 @@
-# Example Deployment
+# Istio Example Deployment
 
 This directory contains a full, working example of how to use oidc-filter together with [Istio](https://istio.io) and [Keycloak](https://keycloak.org).
 

@@ -1,3 +1,8 @@
+
+mod config;
+mod constants;
+mod errors;
+
 use std::time::Duration;
 use std::error::Error;
 use log::{debug, error};
@@ -6,22 +11,15 @@ use proxy_wasm::types::*;
 use url::form_urlencoded;
 use serde::{Deserialize, Serialize};
 
+use errors::ErrorResponse;
+use config::FilterConfig;
+
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
         Box::new(OIDCRootContext{
-            config: FilterConfig{
-                redirect_uri: "".to_string(),
-                target_header_name: "".to_string(),
-                cookie_name: "".to_string(),
-                auth_cluster: "".to_string(),
-                auth_host: "".to_string(),
-                login_uri: "".to_string(),
-                token_uri: "".to_string(),
-                client_id: "".to_string(),
-                client_secret: "".to_string(),
-            }
+            config: FilterConfig::default()
         })
     });
 }
@@ -32,22 +30,6 @@ struct OIDCFilter{
 
 struct OIDCRootContext {
     config: FilterConfig
-}
-
-#[derive(Deserialize, Clone)]
-struct FilterConfig {
-    #[serde(default = "default_redirect_uri")]
-    redirect_uri: String,
-    #[serde(default = "default_target_header_name")]
-    target_header_name: String,
-    #[serde(default = "default_oidc_cookie_name")]
-    cookie_name: String,
-    auth_cluster: String,
-    auth_host: String,
-    login_uri: String,
-    token_uri: String,
-    client_id: String,
-    client_secret: String
 }
 
 #[derive(Deserialize)]
@@ -69,42 +51,6 @@ struct Claims {
     proto: String,
     path: String,
     redirect_uri: String
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    status: String,
-    error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_description: Option<String>
-}
-
-fn create_error(error: String) -> ErrorResponse {
-    ErrorResponse{
-        status: "error".to_owned(),
-        error: error,
-        error_description: None
-    }
-}
-
-fn create_error_with_description(error: String, error_description: String) -> ErrorResponse {
-    ErrorResponse{
-        status: "error".to_owned(),
-        error: error,
-        error_description: Some(error_description)
-    }
-}
-
-fn default_redirect_uri() -> String {
-    "{proto}://{authority}{path}".to_owned()
-}
-
-fn default_oidc_cookie_name() -> String {
-    "oidcToken".to_owned()
-}
-
-fn default_target_header_name() -> String {
-    "authorization".to_owned()
 }
 
 impl OIDCFilter {
@@ -267,7 +213,7 @@ impl HttpContext for OIDCFilter {
                 Err(e) => {
                     self.send_error(
                         503,
-                        create_error(format!("Cannot dispatch call to cluster:  {:?}", e))
+                        ErrorResponse::new(format!("Cannot dispatch call to cluster:  {:?}", e), None)
                     );
                 }
                 Ok(_) => {}
@@ -286,12 +232,12 @@ impl HttpContext for OIDCFilter {
         {
             self.send_error(
                 403,
-                create_error_with_description(
+                ErrorResponse::new(
                     "Not Authorized".to_owned(),
-                    format!(
+                    Some(format!(
                         "Request did not originate from a browser. Please manually open the url: {}",
                         self.get_authorization_url(handshake.0)
-                    )
+                    ))
                 )
             );
             return Action::Pause
@@ -321,9 +267,9 @@ impl Context for OIDCFilter {
                     if data.error != "" {
                         self.send_error(
                             500,
-                            create_error_with_description(
+                            ErrorResponse::new(
                                 data.error.to_owned(),
-                                data.error_description.to_owned()
+                                Some(data.error_description.to_owned())
                             )
                         );
                         return
@@ -349,14 +295,14 @@ impl Context for OIDCFilter {
                 Err(e) => {
                     self.send_error(
                         500,
-                        create_error(format!("Invalid token response:  {:?}", e))
+                        ErrorResponse::new(format!("Invalid token response:  {:?}", e), None)
                     );
                 }
             };
         } else {
             self.send_error(
                 500,
-                create_error(format!("Received invalid payload from authorization server"))
+                ErrorResponse::new(format!("Received invalid payload from authorization server"), None)
             );
         }
     }

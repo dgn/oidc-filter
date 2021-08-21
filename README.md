@@ -1,6 +1,6 @@
 # oidc-filter
 
-`oidc-filter` is a WASM plugin for Envoy/Istio that will redirect users to a given authentication URI if they do not present a JWT token.
+`oidc-filter` is a Wasm plugin for Envoy/Istio that will redirect users to a given authentication URI if they do not present a JWT token.
 
 ## Features
 
@@ -19,7 +19,8 @@ Check out the [examples/](https://github.com/dgn/oidc-filter/tree/master/example
 
 ## Development
 
-- Running `make build` in the root of the repository will build `oidc.wasm`
+- Running `make` in the root of the repository will build `plugin.wasm`
+- Running `make image` will build a container image compatible with OpenShift Service Mesh 2.0+ and Istio 1.12+
 - See the [examples/](https://github.com/dgn/oidc-filter/tree/master/examples/) directory for how to test your changes
 
 ## TODO

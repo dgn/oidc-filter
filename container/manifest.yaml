@@ -1,0 +1,8 @@
+schemaVersion: 1
+  
+name: oidc-filter
+description: OpenID Connect Filter for OpenShift Service Mesh
+version: 0.1.0
+phase: PreAuthN
+priority: 1
+module: plugin.wasm

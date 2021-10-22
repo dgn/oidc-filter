@@ -47,6 +47,7 @@ static_resources:
                         "auth_host": "oauth2.googleapis.com",
                         "token_uri": "/token",
                         "login_uri": "https://accounts.google.com/o/oauth2/v2/auth",
+                        "target_header_name": "Authorization",
                         "client_id": "<YOUR-GOOGLE-OAUTH2-CLIENT-ID>",
                         "client_secret": "<YOUR-GOOGLE-OAUTH2-CLIENT-SECRET>"
                       }

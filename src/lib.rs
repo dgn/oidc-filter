@@ -185,7 +185,10 @@ impl OIDCFilter {
     fn get_handshake_object(&self) -> Result<Claims, Box<dyn Error>> {
         let json =
             self.get_cookie(format!("{}.handshake", self.config.cookie_name.as_str()).as_str());
-        let claims: Claims = serde_json::from_str(json.as_str()).unwrap();
+        let claims: Claims = match serde_json::from_str(json.as_str()) {
+            Ok(claims) => claims,
+            Err(e) => return Err(Box::new(e))
+        };
         Ok(claims)
     }
 }
@@ -210,7 +213,17 @@ impl HttpContext for OIDCFilter {
 
         let code = self.get_code();
         if code != "" {
-            let handshake = self.get_handshake_object().unwrap();
+            let handshake = match self.get_handshake_object() {
+                Ok(handshake) => handshake,
+                Err(_e) => {
+                    self.send_error(
+                        503,
+                        ErrorResponse::new("No handshake object present.".to_owned(), None)
+                    );
+                    return Action::Pause
+                }
+            };
+
             debug!("Code found. Dispatching HTTP call to token endpoint");
             let data: String = form_urlencoded::Serializer::new(String::new())
                 .append_pair("grant_type", "authorization_code")

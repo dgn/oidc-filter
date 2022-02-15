@@ -1,5 +1,5 @@
-use serde::{Deserialize};
 use crate::constants;
+use serde::Deserialize;
 
 #[derive(Deserialize, Clone)]
 pub struct FilterConfig {
@@ -14,12 +14,12 @@ pub struct FilterConfig {
     pub login_uri: String,
     pub token_uri: String,
     pub client_id: String,
-    pub client_secret: String
+    pub client_secret: String,
 }
 
 impl FilterConfig {
     pub fn default() -> FilterConfig {
-        FilterConfig{
+        FilterConfig {
             redirect_uri: "".to_string(),
             target_header_name: "".to_string(),
             cookie_name: "".to_string(),
@@ -29,6 +29,6 @@ impl FilterConfig {
             token_uri: "".to_string(),
             client_id: "".to_string(),
             client_secret: "".to_string(),
-        }    
+        }
     }
 }

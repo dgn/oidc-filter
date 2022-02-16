@@ -215,7 +215,8 @@ impl HttpContext for OIDCFilter {
         if code != "" {
             let handshake = match self.get_handshake_object() {
                 Ok(handshake) => handshake,
-                Err(_e) => {
+                Err(e) => {
+                    error!("Failed to parse handshake object: {}", e);
                     self.send_error(
                         503,
                         ErrorResponse::new("No handshake object present.".to_owned(), None)

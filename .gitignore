@@ -1,5 +1,4 @@
-oidc.wasm
-plugin.wasm
+*.wasm
 
 
 #Added by cargo

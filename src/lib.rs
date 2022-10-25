@@ -187,14 +187,14 @@ impl OIDCFilter {
             self.get_cookie(format!("{}.handshake", self.config.cookie_name.as_str()).as_str());
         let claims: Claims = match serde_json::from_str(json.as_str()) {
             Ok(claims) => claims,
-            Err(e) => return Err(Box::new(e))
+            Err(e) => return Err(Box::new(e)),
         };
         Ok(claims)
     }
 }
 
 impl HttpContext for OIDCFilter {
-    fn on_http_request_headers(&mut self, _: usize) -> Action {
+    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         // If the requester directly passes a header, this filter just passes the request
         // and the next filter should verify that the token is actually valid
         if self.get_header(self.config.target_header_name.as_str()) != "" {
@@ -219,9 +219,9 @@ impl HttpContext for OIDCFilter {
                     error!("Failed to parse handshake object: {}", e);
                     self.send_error(
                         503,
-                        ErrorResponse::new("No handshake object present.".to_owned(), None)
+                        ErrorResponse::new("No handshake object present.".to_owned(), None),
                     );
-                    return Action::Pause
+                    return Action::Pause;
                 }
             };
 
@@ -368,7 +368,7 @@ impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
-        if let Some(config_bytes) = self.get_configuration() {
+        if let Some(config_bytes) = self.get_plugin_configuration() {
             let mut cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
             if cfg.redirect_uri.starts_with('/') {
                 cfg.redirect_uri = format!("{{proto}}://{{authority}}{}", cfg.redirect_uri);

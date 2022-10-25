@@ -13,7 +13,7 @@ kubectl apply -f httpbin-gateway.yaml
 
 kubectl rollout status deployment/httpbin
 HTTPBIN_POD=$(kubectl get pods -lapp=httpbin -o jsonpath='{.items[0].metadata.name}')
-kubectl cp ../oidc.wasm  ${HTTPBIN_POD}:/var/local/lib/wasm-filters/oidc.wasm --container istio-proxy
+kubectl cp ../plugin.wasm  ${HTTPBIN_POD}:/var/local/lib/wasm-filters/plugin.wasm --container istio-proxy
 
 kubectl apply -f istio-auth.yaml
 sed -e "s/INSERT_CLIENT_SECRET_HERE/${CLIENT_SECRET}/" envoyfilter.yaml | kubectl apply -f -

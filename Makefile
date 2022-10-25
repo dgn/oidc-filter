@@ -7,7 +7,7 @@ plugin.wasm:
 	@cargo build --target wasm32-unknown-unknown --release
 	@cp target/wasm32-unknown-unknown/release/oidc_filter.wasm ./plugin.wasm
 
-image: oidc.wasm
+image: plugin.wasm
 	@echo \#\#\# Building container...
 	@${CONTAINER_CLI} build -f container/Dockerfile . -t oidc-filter
 

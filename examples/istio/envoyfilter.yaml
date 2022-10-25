@@ -40,7 +40,7 @@ spec:
               vmConfig:
                 code:
                   local:
-                    filename: /var/local/lib/wasm-filters/oidc.wasm
+                    filename: /var/local/lib/wasm-filters/plugin.wasm
                 runtime: envoy.wasm.runtime.v8
                 vmId: oidc-filter
                 allow_precompiled: true

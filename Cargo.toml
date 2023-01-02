@@ -8,7 +8,7 @@ edition = "2021"
 proxy-wasm = "0.1.4"
 log = "0.4.17"
 url = "2.3.1"
-serde = { version = "1.0.145", features = ["derive"] }
+serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.86"
 
 [lib]

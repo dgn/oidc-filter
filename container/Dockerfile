@@ -1,5 +1,5 @@
 FROM scratch
 
-LABEL type=maistra-extension
+LABEL module.wasm.image/variant=compat
 
-COPY plugin.wasm container/manifest.yaml /
+COPY plugin.wasm /

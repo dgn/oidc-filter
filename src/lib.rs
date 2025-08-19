@@ -348,7 +348,7 @@ impl Context for OIDCFilter {
                 Err(e) => {
                     self.send_error(
                         500,
-                        ErrorResponse::new(format!("Invalid token response:  {:?}", e), None),
+                        ErrorResponse::new(format!("Invalid token response:  {:?}", body), None),
                     );
                 }
             };

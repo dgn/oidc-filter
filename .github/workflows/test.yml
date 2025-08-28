@@ -84,12 +84,11 @@ jobs:
 
       - name: Build project
         run: |
-          cargo build --target wasm32-unknown-unknown --release
+          make image
 
       - name: Run linting
         run: |
-          cargo fmt -- --check
-          cargo clippy --target wasm32-unknown-unknown -- -D warnings
+          make lint
 
       - name: Run tests
         run: |
@@ -104,78 +103,3 @@ jobs:
           make clean-test || true
           docker system prune -f || true
           kind delete cluster --name oidc-filter-test || true
-
-  # Separate job for testing individual components
-  test-components:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        component: [envoy, istio]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          override: true
-
-      - name: Cache cargo registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install Docker (for Envoy)
-        if: matrix.component == 'envoy'
-        run: |
-          sudo systemctl start docker
-          sudo chmod 666 /var/run/docker.sock
-
-      - name: Install Kubernetes tools (for Istio)
-        if: matrix.component == 'istio'
-        run: |
-          # Install kind
-          curl -Lo ./kind \
-            https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-          # Install kubectl
-          curl -LO \
-            "https://dl.k8s.io/release/$(curl -L -s \
-            https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-
-          # Install istioctl
-          curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.20.8 sh -
-          sudo mv istio-*/bin/istioctl /usr/local/bin/
-          rm -rf istio-*
-
-          # Install additional tools
-          sudo apt-get update
-          sudo apt-get install -y jq netcat-openbsd
-
-      - name: Build project
-        run: |
-          cargo build --target wasm32-unknown-unknown --release
-
-      - name: Run ${{ matrix.component }} test
-        run: |
-          make test-${{ matrix.component }}
-
-      - name: Cleanup
-        if: always()
-        run: |
-          if [ "${{ matrix.component }}" = "envoy" ]; then
-            docker system prune -f || true
-          elif [ "${{ matrix.component }}" = "istio" ]; then
-            kind delete cluster --name oidc-filter-test || true
-          fi

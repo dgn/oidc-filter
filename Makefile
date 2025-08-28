@@ -33,6 +33,10 @@ test-istio-interactive: plugin.wasm
 	@echo \#\#\# Running Istio example interactively...
 	@cd examples/istio && ./test.sh --interactive
 
+lint:
+	@cargo fmt -- --check
+	@cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
 .PHONY: clean clean-test test test-envoy test-istio test-envoy-interactive test-istio-interactive
 clean:
 	@echo \#\#\# Cleaning up...

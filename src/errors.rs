@@ -12,7 +12,7 @@ impl ErrorResponse {
     pub fn new(error: String, description: Option<String>) -> ErrorResponse {
         ErrorResponse {
             status: "error".to_owned(),
-            error: error,
+            error,
             error_description: description,
         }
     }

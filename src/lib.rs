@@ -58,7 +58,7 @@ impl OIDCFilter {
                 return value.to_owned();
             }
         }
-        return "".to_owned();
+        "".to_owned()
     }
 
     fn get_code(&self) -> String {
@@ -72,10 +72,10 @@ impl OIDCFilter {
         let encoded = form_urlencoded::parse(query.as_bytes());
         for (k, v) in encoded {
             if k == "code" {
-                return v.to_owned().to_string();
+                return v.into_owned().to_string();
             }
         }
-        return "".to_owned();
+        "".to_owned()
     }
 
     fn get_cookie(&self, name: &str) -> String {
@@ -93,17 +93,16 @@ impl OIDCFilter {
                 }
             }
         }
-        return "".to_owned();
+        "".to_owned()
     }
 
     fn get_redirect_uri(&self, proto: &str, authority: &str, path: &str) -> String {
-        return self
-            .config
+        self.config
             .redirect_uri
             .to_owned()
-            .replace("{proto}", &proto)
-            .replace("{authority}", &authority)
-            .replace("{path}", &path);
+            .replace("{proto}", proto)
+            .replace("{authority}", authority)
+            .replace("{path}", path)
     }
 
     fn get_authorization_url(&self, claims: Claims) -> String {
@@ -130,10 +129,10 @@ impl OIDCFilter {
 
     fn get_proto(&self) -> String {
         let proto = self.get_header("x-forwarded-proto");
-        if proto != "" {
+        if !proto.is_empty() {
             return proto;
         }
-        return "http".to_owned();
+        "http".to_owned()
     }
 
     fn to_set_cookie_header(&self, t: TokenResponse) -> String {
@@ -142,14 +141,14 @@ impl OIDCFilter {
         } else {
             "HttpOnly; Secure"
         };
-        return format!(
+        format!(
             "{}={};Max-Age={};{}",
             self.config.cookie_name, t.id_token, t.expires_in, flags
-        );
+        )
     }
 
     fn to_del_cookie_header(&self, name: String) -> String {
-        return format!("{}=;Max-Age=0", name.as_str());
+        format!("{}=;Max-Age=0", name.as_str())
     }
 
     fn create_handshake_object(&self) -> Result<(Claims, String), Box<dyn Error>> {
@@ -158,7 +157,7 @@ impl OIDCFilter {
         let path = self.get_http_request_header(":path").unwrap();
         let nonce = self.get_header("x-request-id");
         let claims = Claims {
-            nonce: nonce,
+            nonce,
             iss: authority.to_owned(),
             path: path.to_owned(),
             proto: self.get_proto(),
@@ -185,7 +184,7 @@ impl OIDCFilter {
             self.get_cookie(format!("{}.handshake", self.config.cookie_name.as_str()).as_str());
         let claims: Claims = match serde_json::from_str(json.as_str()) {
             Ok(claims) => claims,
-            Err(e) => return Err(Box::new(e))
+            Err(e) => return Err(Box::new(e)),
         };
         Ok(claims)
     }
@@ -195,12 +194,15 @@ impl HttpContext for OIDCFilter {
     fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         // If the requester directly passes a header, this filter just passes the request
         // and the next filter should verify that the token is actually valid
-        if self.get_header(self.config.target_header_name.as_str()) != "" {
+        if !self
+            .get_header(self.config.target_header_name.as_str())
+            .is_empty()
+        {
             return Action::Continue;
         }
 
         let token = self.get_cookie(self.config.cookie_name.as_str());
-        if token != "" {
+        if !token.is_empty() {
             debug!("Cookie found, setting auth header");
             self.set_http_request_header(
                 self.config.target_header_name.as_str(),
@@ -210,16 +212,16 @@ impl HttpContext for OIDCFilter {
         }
 
         let code = self.get_code();
-        if code != "" {
+        if !code.is_empty() {
             let handshake = match self.get_handshake_object() {
                 Ok(handshake) => handshake,
                 Err(e) => {
                     error!("Failed to parse handshake object: {}", e);
                     self.send_error(
                         503,
-                        ErrorResponse::new("No handshake object present.".to_owned(), None)
+                        ErrorResponse::new("No handshake object present.".to_owned(), None),
                     );
-                    return Action::Pause
+                    return Action::Pause;
                 }
             };
 
@@ -247,17 +249,11 @@ impl HttpContext for OIDCFilter {
                 Duration::from_secs(5),
             );
 
-            match token_request {
-                Err(e) => {
-                    self.send_error(
-                        503,
-                        ErrorResponse::new(
-                            format!("Cannot dispatch call to cluster:  {:?}", e),
-                            None,
-                        ),
-                    );
-                }
-                Ok(_) => {}
+            if let Err(e) = token_request {
+                self.send_error(
+                    503,
+                    ErrorResponse::new(format!("Cannot dispatch call to cluster:  {:?}", e), None),
+                );
             }
 
             return Action::Pause;
@@ -272,7 +268,8 @@ impl HttpContext for OIDCFilter {
         // Requests not originating from full page loads don't need redirects
         let source = self.get_header("sec-fetch-dest");
         let accept = self.get_header("accept");
-        if (source != "" && source != "document") || (source == "" && !accept.contains("text/html"))
+        if (!source.is_empty() && source != "document")
+            || (source.is_empty() && !accept.contains("text/html"))
         {
             self.send_error(
                 403,
@@ -296,7 +293,7 @@ impl HttpContext for OIDCFilter {
             Some(b""),
         );
 
-        return Action::Pause;
+        Action::Pause
     }
 }
 
@@ -307,7 +304,7 @@ impl Context for OIDCFilter {
         if let Some(body) = self.get_http_call_response_body(0, body_size) {
             match serde_json::from_slice::<TokenResponse>(body.as_slice()) {
                 Ok(data) => {
-                    if data.error != "" {
+                    if !data.error.is_empty() {
                         self.send_error(
                             500,
                             ErrorResponse::new(
@@ -318,7 +315,7 @@ impl Context for OIDCFilter {
                         return;
                     }
 
-                    if data.id_token != "" {
+                    if !data.id_token.is_empty() {
                         debug!("id_token found. Setting cookie and redirecting...");
 
                         let handshake = self.get_handshake_object().unwrap();
@@ -340,7 +337,6 @@ impl Context for OIDCFilter {
                             ],
                             Some(b""),
                         );
-                        return;
                     }
                 }
                 Err(_e) => {
@@ -354,7 +350,7 @@ impl Context for OIDCFilter {
             self.send_error(
                 500,
                 ErrorResponse::new(
-                    format!("Received invalid payload from authorization server"),
+                    "Received invalid payload from authorization server".to_string(),
                     None,
                 ),
             );

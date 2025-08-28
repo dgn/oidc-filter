@@ -1,0 +1,21 @@
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: openid-connect
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  url: oci://registry.gitlab.com/dgrimm/istio/oidc-filter:latest
+  imagePullPolicy: IfNotPresent
+  phase: AUTHN
+  pluginConfig:
+    auth_cluster: outbound|8080||keycloak.auth.svc.cluster.local
+    auth_host: keycloak.auth.svc.cluster.local:8080
+    login_uri: http://localhost:8081/auth/realms/master/protocol/openid-connect/auth
+    token_uri: http://localhost:8081/realms/master/protocol/openid-connect/token
+    client_id: test
+    client_secret: INSERT_CLIENT_SECRET_HERE
+  selector:
+    matchLabels:
+      app: httpbin

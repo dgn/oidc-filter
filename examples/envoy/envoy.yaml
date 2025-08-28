@@ -79,7 +79,8 @@ static_resources:
               bypass_cors_preflight: "true"
 
           - name: envoy.filters.http.router
-
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
   clusters:
   - name: cluster_google_auth

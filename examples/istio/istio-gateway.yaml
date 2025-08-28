@@ -25,12 +25,14 @@ spec:
   http:
   - match:
     - uri:
-        prefix: /auth
+        prefix: /auth/
+    rewrite:
+      uri: "/"
     route:
     - destination:
         port:
           number: 8080
-        host: keycloak.default.svc.cluster.local
+        host: keycloak.auth.svc.cluster.local
   - route:
     - destination:
         port:

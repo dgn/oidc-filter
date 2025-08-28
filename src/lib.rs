@@ -13,15 +13,14 @@ use url::form_urlencoded;
 use config::FilterConfig;
 use errors::ErrorResponse;
 
-#[no_mangle]
-pub fn _start() {
+proxy_wasm::main! {{
     proxy_wasm::set_log_level(LogLevel::Trace);
     proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> {
         Box::new(OIDCRootContext {
             config: FilterConfig::default(),
         })
     });
-}
+}}
 
 struct OIDCFilter {
     config: FilterConfig,
@@ -54,10 +53,9 @@ struct Claims {
 
 impl OIDCFilter {
     fn get_header(&self, name: &str) -> String {
-        let headers = self.get_http_request_headers();
-        for (key, _value) in headers.iter() {
+        for (key, value) in &self.get_http_request_headers() {
             if key.to_lowercase().trim() == name {
-                return _value.to_owned();
+                return value.to_owned();
             }
         }
         return "".to_owned();
@@ -194,7 +192,7 @@ impl OIDCFilter {
 }
 
 impl HttpContext for OIDCFilter {
-    fn on_http_request_headers(&mut self, _: usize) -> Action {
+    fn on_http_request_headers(&mut self, _: usize, _: bool) -> Action {
         // If the requester directly passes a header, this filter just passes the request
         // and the next filter should verify that the token is actually valid
         if self.get_header(self.config.target_header_name.as_str()) != "" {
@@ -345,7 +343,7 @@ impl Context for OIDCFilter {
                         return;
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     self.send_error(
                         500,
                         ErrorResponse::new(format!("Invalid token response:  {:?}", body), None),
@@ -368,7 +366,7 @@ impl Context for OIDCRootContext {}
 
 impl RootContext for OIDCRootContext {
     fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
-        if let Some(config_bytes) = self.get_configuration() {
+        if let Some(config_bytes) = self.get_plugin_configuration() {
             let mut cfg: FilterConfig = serde_json::from_slice(config_bytes.as_slice()).unwrap();
             if cfg.redirect_uri.starts_with('/') {
                 cfg.redirect_uri = format!("{{proto}}://{{authority}}{}", cfg.redirect_uri);

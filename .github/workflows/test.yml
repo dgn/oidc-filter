@@ -47,18 +47,6 @@ jobs:
         run: |
           make test-deps
 
-      - name: Verify tool versions
-        run: |
-          echo "=== Tool Versions ==="
-          docker --version
-          kind --version
-          kubectl version --client
-          istioctl version --remote=false
-          curl --version
-          jq --version
-          cargo --version
-          rustc --version
-
       - name: Build project
         run: |
           make image

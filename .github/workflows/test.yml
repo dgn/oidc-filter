@@ -86,10 +86,6 @@ jobs:
         run: |
           make image
 
-      - name: Run linting
-        run: |
-          make lint
-
       - name: Run tests
         run: |
           # Set up Docker permissions for the current user

@@ -37,38 +37,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Docker
+      - name: Start Docker
         run: |
           # Docker is pre-installed on GitHub runners, just ensure it's running
           sudo systemctl start docker
           sudo usermod -aG docker $USER
 
-      - name: Install kind
+      - name: Install test dependencies
         run: |
-          # Install kind for Kubernetes testing
-          curl -Lo ./kind \
-            https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-
-      - name: Install kubectl
-        run: |
-          curl -LO \
-            "https://dl.k8s.io/release/$(curl -L -s \
-            https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-
-      - name: Install istioctl
-        run: |
-          curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.27.0 sh -
-          sudo mv istio-*/bin/istioctl /usr/local/bin/
-          rm -rf istio-*
-
-      - name: Install additional tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq netcat-openbsd
+          make test-deps
 
       - name: Verify tool versions
         run: |

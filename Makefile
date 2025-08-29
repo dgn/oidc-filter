@@ -1,6 +1,11 @@
 IMAGE ?= registry.gitlab.com/dgrimm/istio/oidc-filter:latest
 CONTAINER_CLI ?= docker
 TEST_TIMEOUT ?= 300
+BIN_DIRECTORY ?= $(shell pwd)/bin
+
+KIND_VERSION=v0.30.0
+KUBECTL_VERSION=v1.34.0
+ISTIO_VERSION=1.27.0
 
 build: clean plugin.wasm
 
@@ -19,19 +24,35 @@ test: build test-envoy test-istio
 
 test-envoy: plugin.wasm
 	@echo \#\#\# Testing Envoy example...
-	@cd examples/envoy && ./test.sh
+	@cd examples/envoy && PATH=${BIN_DIRECTORY}:${PATH} ./test.sh
 
 test-istio: plugin.wasm
 	@echo \#\#\# Testing Istio example...
-	@cd examples/istio && ./test.sh
+	@cd examples/istio && PATH=${BIN_DIRECTORY}:${PATH} ./test.sh
 
 test-envoy-interactive: plugin.wasm
 	@echo \#\#\# Running Envoy example interactively...
-	@cd examples/envoy && ./test.sh --interactive
+	@cd examples/envoy && PATH=${BIN_DIRECTORY}:${PATH} ./test.sh --interactive
 
 test-istio-interactive: plugin.wasm
 	@echo \#\#\# Running Istio example interactively...
-	@cd examples/istio && ./test.sh --interactive
+	@cd examples/istio && PATH=${BIN_DIRECTORY}:${PATH} ./test.sh --interactive
+
+test-deps:
+	@mkdir -p ${BIN_DIRECTORY}
+	@printf "Downloading kind ${KIND_VERSION}...\t"
+	@curl -Lo ${BIN_DIRECTORY}/kind https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64 2>/dev/null
+	@chmod +x ${BIN_DIRECTORY}/kind
+	@echo "✓"
+	@printf "Downloading kubectl ${KUBECTL_VERSION}...\t"
+	@curl -Lo ${BIN_DIRECTORY}/kubectl "https://cdn.dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" 2>/dev/null
+	@chmod +x ${BIN_DIRECTORY}/kubectl
+	@echo "✓"
+	@printf "Downloading istioctl v${ISTIO_VERSION}...\t"
+	@curl -Lo istioctl.tar.gz https://github.com/istio/istio/releases/download/${ISTIO_VERSION}/istioctl-${ISTIO_VERSION}-linux-amd64.tar.gz 2>/dev/null
+	@tar xzf istioctl.tar.gz -C ${BIN_DIRECTORY}
+	@rm istioctl.tar.gz
+	@echo "✓"
 
 lint:
 	@cargo fmt -- --check

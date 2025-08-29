@@ -1,5 +1,5 @@
 ---
-name: Test
+name: lint
 
 on:
   push:
@@ -37,6 +37,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Run linting
+      - name: Run linters
         run: |
           make lint

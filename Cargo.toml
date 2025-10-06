@@ -6,7 +6,7 @@ authors = ["Daniel Grimm <dgrimm@redhat.com>"]
 edition = "2024"
 
 [dependencies]
-proxy-wasm = "0.2.3"
+proxy-wasm = "0.2.4"
 log = "0.4.28"
 url = "2.5.7"
 serde = { version = "1.0.228", features = ["derive"] }

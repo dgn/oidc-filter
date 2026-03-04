@@ -45,7 +45,7 @@ test-deps:
 	@chmod +x ${BIN_DIRECTORY}/kind
 	@echo "✓"
 	@printf "Downloading kubectl ${KUBECTL_VERSION}...\t"
-	@curl -Lo ${BIN_DIRECTORY}/kubectl "https://cdn.dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" 2>/dev/null
+	@curl -Lo ${BIN_DIRECTORY}/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" 2>/dev/null
 	@chmod +x ${BIN_DIRECTORY}/kubectl
 	@echo "✓"
 	@printf "Downloading istioctl v${ISTIO_VERSION}...\t"
